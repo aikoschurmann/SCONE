@@ -190,4 +190,97 @@ pub const ExpressionDatabase = struct {
         self.expr_to_class.deinit();
         self.expr_arena.deinit();
     }
+
+    pub fn eval(self: *ExpressionDatabase, ctx: *const EvaluationContext, expr: ast.Expr) Fingerprint {
+        switch (expr) {
+            .variable => |v| {
+                return .{ .output = switch (v) {
+                    .x => ctx.x_samples,
+                    .y => ctx.y_samples,
+                    .z => ctx.z_samples,
+                } };
+            },
+
+            .constant => |c| {
+                // @splat copies the constant scalar into all 64 lanes of the SIMD vector
+                return .{ .output = @splat(c) };
+            },
+
+            // --- BOTTOM-UP EVALUATION ---
+            .unary => |un| {
+                // retrieve the class id of the child expr
+                const child_class_id = self.expr_to_class.items[un.expr];
+                // from that class id get the fingerprint
+                const child_fp = self.classes.items[child_class_id].fingerprint.output;
+
+                const result_vec = switch (un.op) {
+                    .not => ~child_fp,
+                    .neg => @as(Vector64, @splat(0)) -% child_fp,
+                    // Explicitly cast the resulting @Vector(64, u6) back to Vector64 (@Vector(64, u32))
+                    .clz => @as(Vector64, @intCast(@clz(child_fp))),
+                    .ctz => @as(Vector64, @intCast(@ctz(child_fp))),
+                    .popcount => @as(Vector64, @intCast(@popCount(child_fp))),
+                };
+
+                return .{ .output = result_vec };
+            },
+
+            .binary => |bin| {
+                // retrieve the class id of the lhs and rhs
+                const lhs_class_id = self.expr_to_class.items[bin.lhs];
+                const rhs_class_id = self.expr_to_class.items[bin.rhs];
+
+                // from those ids get the fingerprints
+                const lhs_fp = self.classes.items[lhs_class_id].fingerprint.output;
+                const rhs_fp = self.classes.items[rhs_class_id].fingerprint.output;
+
+                const result_vec = switch (bin.op) {
+                    .add => lhs_fp +% rhs_fp,
+                    .sub => lhs_fp -% rhs_fp,
+                    .mul => lhs_fp *% rhs_fp,
+                    .and_op => lhs_fp & rhs_fp,
+                    .or_op => lhs_fp | rhs_fp,
+                    .xor => lhs_fp ^ rhs_fp,
+
+                    // Shifts: Zig requires the right hand side to be the shift width type (u5).
+                    // We truncate the 32-bit vector down to a 5-bit vector.
+                    .shl => lhs_fp << @as(@Vector(N_SAMPLES, u5), @truncate(rhs_fp)),
+                    .lshr => lhs_fp >> @as(@Vector(N_SAMPLES, u5), @truncate(rhs_fp)),
+
+                    // Arithmetic Shift Right (ashr) requires a signed integer.
+                    // We bitcast the u32 vectors to i32 vectors, shift them, and bitcast back.
+                    .ashr => @as(Vector64, @bitCast(@as(@Vector(N_SAMPLES, i32), @bitCast(lhs_fp)) >> @as(@Vector(N_SAMPLES, u5), @truncate(rhs_fp)))),
+
+                    // Boolean Comparisons: The paper requires boolean ops to return 0 or 1 as i32.
+                    // @select maps the boolean vector `lhs == rhs` into a u32 vector of 1s and 0s.
+                    .eq => @select(u32, lhs_fp == rhs_fp, @as(Vector64, @splat(1)), @as(Vector64, @splat(0))),
+                    .ult => @select(u32, lhs_fp < rhs_fp, @as(Vector64, @splat(1)), @as(Vector64, @splat(0))),
+                    .ule => @select(u32, lhs_fp <= rhs_fp, @as(Vector64, @splat(1)), @as(Vector64, @splat(0))),
+
+                    // Signed comparisons require bitcasting to signed integers first
+                    .slt => @select(u32, @as(@Vector(N_SAMPLES, i32), @bitCast(lhs_fp)) < @as(@Vector(N_SAMPLES, i32), @bitCast(rhs_fp)), @as(Vector64, @splat(1)), @as(Vector64, @splat(0))),
+                    .sle => @select(u32, @as(@Vector(N_SAMPLES, i32), @bitCast(lhs_fp)) <= @as(@Vector(N_SAMPLES, i32), @bitCast(rhs_fp)), @as(Vector64, @splat(1)), @as(Vector64, @splat(0))),
+                };
+
+                return .{ .output = result_vec };
+            },
+            .select => |sel| {
+                const cond_class = self.expr_to_class.items[sel.cond];
+                const t_class = self.expr_to_class.items[sel.true_val];
+                const f_class = self.expr_to_class.items[sel.false_val];
+
+                const cond_fp = self.classes.items[cond_class].fingerprint.output;
+                const t_fp = self.classes.items[t_class].fingerprint.output;
+                const f_fp = self.classes.items[f_class].fingerprint.output;
+
+                // The paper defines `select c, a, b` as `(c != 0) ? a : b`
+                const condition_vector = cond_fp != @as(Vector64, @splat(0));
+
+                // Hardware conditional move (CMOV/Blend) over all 64 lanes at once
+                const result_vec = @select(u32, condition_vector, t_fp, f_fp);
+
+                return .{ .output = result_vec };
+            },
+        }
+    }
 };
