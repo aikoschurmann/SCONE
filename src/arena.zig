@@ -8,17 +8,25 @@ pub const ExpressionArena = struct {
     allocator: std.mem.Allocator,
     nodes: std.ArrayList(ast.Expr),
 
-    pub fn init(allocator: std.mem.Allocator, initial_capacity: usize) ExpressionArena {
+    /// Initializes the arena with a pre-allocated capacity.
+    /// Returns an OutOfMemory error (!) if the OS denies the allocation.
+    pub fn init(allocator: std.mem.Allocator, initial_capacity: usize) !ExpressionArena {
         return .{
             .allocator = allocator,
-            .nodes = std.ArrayList(ast.Expr).initCapacity(allocator, initial_capacity) catch unreachable,
+            .nodes = try std.ArrayList(ast.Expr).initCapacity(allocator, initial_capacity),
         };
     }
 
+    /// Safely frees all memory allocated by the arena.
+    pub fn deinit(self: *ExpressionArena) void {
+        self.nodes.deinit();
+    }
+
     /// Appends a new expression and returns its index.
-    pub fn add(self: *ExpressionArena, expr: ast.Expr) ast.ExprId {
+    /// Returns an OutOfMemory error (!) if the array needs to grow and RAM is exhausted.
+    pub fn add(self: *ExpressionArena, expr: ast.Expr) !ast.ExprId {
         const id = @as(ast.ExprId, @intCast(self.nodes.items.len));
-        self.nodes.append(expr) catch unreachable;
+        try self.nodes.append(expr);
         return id;
     }
 
