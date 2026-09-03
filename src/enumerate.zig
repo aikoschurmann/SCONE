@@ -348,8 +348,8 @@ pub const Enumerator = struct {
         const final_speed = if (total_elapsed_s > 0) @as(f64, @floatFromInt(exprs_processed)) / total_elapsed_s else 0.0;
         std.debug.print("\rCost {d}: Processed {d} exprs ({d} unique) | {d:.1} expr/s | elapsed: {d:.1}s - DONE.   \n", .{k, exprs_processed, self.db.classes.items.len, final_speed, total_elapsed_s});
         
-        const tel_file = std.fs.cwd().openFile("telemetry.jsonl", .{ .mode = .read_write }) catch |err| switch (err) {
-            error.FileNotFound => try std.fs.cwd().createFile("telemetry.jsonl", .{}),
+        const tel_file = std.fs.cwd().openFile(config.telemetry_file, .{ .mode = .read_write }) catch |err| switch (err) {
+            error.FileNotFound => try std.fs.cwd().createFile(config.telemetry_file, .{}),
             else => return err,
         };
         try tel_file.seekFromEnd(0);

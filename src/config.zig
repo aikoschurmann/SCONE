@@ -57,11 +57,12 @@ pub const base_edge_cases = blk: {
 pub const num_edge_cases = base_edge_cases.len;
 pub const edge_grid_samples = if (use_cartesian_grid) num_edge_cases * num_edge_cases * num_edge_cases else 0;
 pub const num_random_samples = 4096; // Baseline random slots
-pub const total_samples = edge_grid_samples + num_random_samples;
 
 /// CEGIS Configuration
-pub const counterexamples_file = "counterexamples.txt";
-pub const verification_export_file = "classes.txt";
+pub const out_dir = "out";
+pub const counterexamples_file = "out/counterexamples.txt";
+pub const telemetry_file = "out/telemetry.jsonl";
+pub const verification_export_file = "out/classes.txt";
 pub const max_classes_to_export = 50_000;
 
 /// AST Generation Configuration

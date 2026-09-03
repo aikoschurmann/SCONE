@@ -5,14 +5,15 @@ const expr_arena = @import("arena.zig");
 const config = @import("config.zig");
 
 pub const BATCH_SIZE = 64;
-pub const TOTAL_SAMPLES = config.total_samples;
-pub const NUM_BATCHES = (TOTAL_SAMPLES + BATCH_SIZE - 1) / BATCH_SIZE;
 pub const Vector64 = @Vector(BATCH_SIZE, u32);
 
 pub const EvaluationContext = struct {
-    x_batches: [NUM_BATCHES]Vector64,
-    y_batches: [NUM_BATCHES]Vector64,
-    z_batches: [NUM_BATCHES]Vector64,
+    x_batches: []Vector64,
+    y_batches: []Vector64,
+    z_batches: []Vector64,
+    num_batches: usize,
+    total_samples: usize,
+    allocator: std.mem.Allocator,
 
     fn setSample(ctx: *EvaluationContext, idx: usize, x: u32, y: u32, z: u32) void {
         const batch_idx = idx / BATCH_SIZE;
@@ -21,9 +22,41 @@ pub const EvaluationContext = struct {
         ctx.y_batches[batch_idx][lane_idx] = y;
         ctx.z_batches[batch_idx][lane_idx] = z;
     }
+    
+    pub fn deinit(self: *EvaluationContext) void {
+        self.allocator.free(self.x_batches);
+        self.allocator.free(self.y_batches);
+        self.allocator.free(self.z_batches);
+    }
 
-    pub fn init() EvaluationContext {
-        var ctx: EvaluationContext = undefined;
+    pub fn init(allocator: std.mem.Allocator) !EvaluationContext {
+        // Calculate dynamic capacity based on file size + padding
+        var ce_count: usize = 0;
+        if (std.fs.cwd().openFile(config.counterexamples_file, .{})) |f| {
+            var buf_reader = std.io.bufferedReader(f.reader());
+            var stream = buf_reader.reader();
+            var buf: [1024]u8 = undefined;
+            while (stream.readUntilDelimiterOrEof(&buf, '\n') catch null) |line| {
+                if (line.len > 0) ce_count += 1;
+            }
+            f.close();
+        } else |_| {}
+        
+        const total_samples = config.edge_grid_samples + ce_count + config.num_random_samples;
+        const num_batches = (total_samples + BATCH_SIZE - 1) / BATCH_SIZE;
+        
+        var ctx = EvaluationContext{
+            .allocator = allocator,
+            .num_batches = num_batches,
+            .total_samples = total_samples,
+            .x_batches = try allocator.alloc(Vector64, num_batches),
+            .y_batches = try allocator.alloc(Vector64, num_batches),
+            .z_batches = try allocator.alloc(Vector64, num_batches),
+        };
+        @memset(ctx.x_batches, @as(Vector64, @splat(0)));
+        @memset(ctx.y_batches, @as(Vector64, @splat(0)));
+        @memset(ctx.z_batches, @as(Vector64, @splat(0)));
+
 
         var idx: usize = 0;
 
@@ -46,7 +79,7 @@ pub const EvaluationContext = struct {
         //    of the existing boundary coverage.
         // Read counterexamples from CEGIS loop
         const ce_file = std.fs.cwd().openFile(config.counterexamples_file, .{}) catch null;
-        var ce_count: usize = 0;
+        ce_count = 0;
         if (ce_file) |f| {
             defer f.close();
             var buf_reader = std.io.bufferedReader(f.reader());
@@ -67,7 +100,7 @@ pub const EvaluationContext = struct {
                 ctx.setSample(idx, ux, uy, uz);
                 ce_count += 1;
                 idx += 1;
-                if (idx >= TOTAL_SAMPLES) break;
+                if (idx >= total_samples) break;
             }
         }
         
@@ -76,7 +109,7 @@ pub const EvaluationContext = struct {
         }
         var prng = std.Random.DefaultPrng.init(0xC0FFEE_C0FFEE);
         const rand = prng.random();
-        while (idx < TOTAL_SAMPLES) : (idx += 1) {
+        while (idx < total_samples) : (idx += 1) {
             ctx.setSample(idx, rand.int(u32), rand.int(u32), rand.int(u32));
         }
 
@@ -222,7 +255,7 @@ pub const ExpressionDatabase = struct {
     pub fn eval_and_hash(ctx: *const EvaluationContext, expr: ast.Expr, expr_arena_ref: *const expr_arena.ExpressionArena) FingerprintHash {
         var hasher = std.hash.Wyhash.init(0);
 
-        for (0..NUM_BATCHES) |batch_idx| {
+        for (0..ctx.num_batches) |batch_idx| {
             const batch_res = eval_batch(ctx, expr, expr_arena_ref, batch_idx);
             const bytes = std.mem.asBytes(&batch_res);
             hasher.update(bytes);

@@ -35,12 +35,14 @@ pub fn main() !void {
             std.debug.print("======================================\n", .{});
         }
 
-        const ctx = eval.EvaluationContext.init();
+        std.fs.cwd().makeDir(config.out_dir) catch |err| { if (err != error.PathAlreadyExists) return err; };
+        var eval_ctx = try eval.EvaluationContext.init(allocator);
+        defer eval_ctx.deinit();
 
         var db = try eval.ExpressionDatabase.init(allocator);
         defer db.deinit();
 
-        var enumerator = try enumerate.Enumerator.init(allocator, &db, &ctx);
+        var enumerator = try enumerate.Enumerator.init(allocator, &db, &eval_ctx);
         defer enumerator.deinit();
 
         try enumerator.setup_threads(num_threads);
@@ -77,15 +79,15 @@ pub fn main() !void {
         std.debug.print("Perfectly Unique Classes (1):   {}\n", .{perfect_classes});
         std.debug.print("Colliding Classes (>1):         {}  (Exporting to Z3)\n", .{colliding_classes});
         std.debug.print("Expressions in Collisions:      {}\n", .{trapped_exprs});
-        std.debug.print("Active Evaluation Grid Size:    {}\n", .{eval.TOTAL_SAMPLES});
+        std.debug.print("Active Evaluation Grid Size:    {}\n", .{eval_ctx.total_samples});
         std.debug.print("---------------------\n\n", .{});
         
-        const tel_file = std.fs.cwd().openFile("telemetry.jsonl", .{ .mode = .read_write }) catch |err| switch (err) {
-            error.FileNotFound => try std.fs.cwd().createFile("telemetry.jsonl", .{}),
+        const tel_file = std.fs.cwd().openFile(config.telemetry_file, .{ .mode = .read_write }) catch |err| switch (err) {
+            error.FileNotFound => try std.fs.cwd().createFile(config.telemetry_file, .{}),
             else => return err,
         };
         try tel_file.seekFromEnd(0);
-        try tel_file.writer().print("{{\"event\": \"metrics\", \"iteration\": {d}, \"total_ast_nodes\": {d}, \"total_classes\": {d}, \"perfect_classes\": {d}, \"colliding_classes\": {d}, \"exprs_in_collisions\": {d}, \"eval_grid_size\": {d}}}\n", .{iteration, db.expr_arena.len, db.classes.items.len, perfect_classes, colliding_classes, trapped_exprs, eval.TOTAL_SAMPLES});
+        try tel_file.writer().print("{{\"event\": \"metrics\", \"iteration\": {d}, \"total_ast_nodes\": {d}, \"total_classes\": {d}, \"perfect_classes\": {d}, \"colliding_classes\": {d}, \"exprs_in_collisions\": {d}, \"eval_grid_size\": {d}}}\n", .{iteration, db.expr_arena.len, db.classes.items.len, perfect_classes, colliding_classes, trapped_exprs, eval_ctx.total_samples});
         tel_file.close();
 
         if (!verify_mode) break;

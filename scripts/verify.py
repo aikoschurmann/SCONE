@@ -87,7 +87,7 @@ def main():
     current_exprs = []
     
     try:
-        with open('classes.txt') as f:
+        with open('out/classes.txt') as f:
             for line in f:
                 line = line.strip()
                 if not line: continue
@@ -101,7 +101,7 @@ def main():
         if current_class is not None:
             classes.append((current_class, current_exprs))
     except FileNotFoundError:
-        print("classes.txt not found yet.")
+        print("out/classes.txt not found yet.")
         sys.exit(1)
 
     print(f"Loaded {len(classes)} classes. Spawning workers...")
@@ -118,7 +118,7 @@ def main():
     timeouts = 0
     timeout_classes = []
     
-    with open('counterexamples.txt', 'a') as ce_writer:
+    with open('out/counterexamples.txt', 'a') as ce_writer:
         for res in results:
             processed += 1
             if processed % 10 == 0:
@@ -150,7 +150,7 @@ def main():
     
     import json
     iteration = int(sys.argv[1]) if len(sys.argv) > 1 else 1
-    with open('telemetry.jsonl', 'a') as f:
+    with open('out/telemetry.jsonl', 'a') as f:
         f.write(json.dumps({
             "event": "verify",
             "iteration": iteration,
