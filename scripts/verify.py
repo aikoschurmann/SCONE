@@ -115,15 +115,21 @@ def main():
     
     total_classes = len(classes)
     processed = 0
+    timeouts = 0
+    timeout_classes = []
     
     with open('counterexamples.txt', 'a') as ce_writer:
         for res in results:
             processed += 1
             if processed % 10 == 0:
-                print(f"\rVerifying: {processed}/{total_classes} classes ({mistakes} mistakes, {len(ces_found)} unique CEs)...", end="", flush=True)
+                print(f"\rVerifying: {processed}/{total_classes} classes ({mistakes} mistakes, {timeouts} timeouts, {len(ces_found)} unique CEs)...", end="", flush=True)
 
             if res is not None:
                 cid, e1, e2, xv, yv, zv = res
+                if e1 == "TIMEOUT":
+                    timeouts += 1
+                    timeout_classes.append(cid)
+                    continue
                 print(f"\rMISTAKE IN {cid}! {e1} != {e2} (CE: {xv},{yv},{zv})")
                 
                 # Deduplicate counterexamples before writing to file
@@ -140,7 +146,21 @@ def main():
                     pool.terminate()
                     break
 
-    print(f"\nVerification complete. Mistakes found: {mistakes}. Unique CEs appended: {len(ces_found)}")
+    print(f"\nVerification complete. Mistakes found: {mistakes}. Timeouts: {timeouts}. Unique CEs appended: {len(ces_found)}")
+    
+    import json
+    iteration = int(sys.argv[1]) if len(sys.argv) > 1 else 1
+    with open('telemetry.jsonl', 'a') as f:
+        f.write(json.dumps({
+            "event": "verify",
+            "iteration": iteration,
+            "classes_verified": processed,
+            "mistakes_found": mistakes,
+            "timeouts": timeouts,
+            "timeout_classes": timeout_classes,
+            "unique_ce_appended": len(ces_found)
+        }) + "\n")
+        
     sys.exit(0 if mistakes == 0 else 1)
 
 if __name__ == '__main__':
