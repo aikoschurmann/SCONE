@@ -50,8 +50,35 @@ pub fn main() !void {
             try enumerator.orchestrate_cost(c, num_threads);
         }
 
-        std.debug.print("Total Unique Equivalence Classes: {}\n", .{db.classes.items.len});
-        std.debug.print("Total AST Nodes: {}\n", .{db.expr_arena.len});
+        var perfect_classes: usize = 0;
+        var colliding_classes: usize = 0;
+        var trapped_exprs: usize = 0;
+        
+        var class_sizes = try allocator.alloc(u32, db.classes.items.len);
+        defer allocator.free(class_sizes);
+        @memset(class_sizes, 0);
+        
+        for (db.expr_to_class.items) |cid| {
+            class_sizes[cid] += 1;
+        }
+        
+        for (class_sizes) |size| {
+            if (size == 1) {
+                perfect_classes += 1;
+            } else if (size > 1) {
+                colliding_classes += 1;
+                trapped_exprs += size;
+            }
+        }
+
+        std.debug.print("\n--- SCONE METRICS ---\n", .{});
+        std.debug.print("Total AST Nodes Generated:      {}\n", .{db.expr_arena.len});
+        std.debug.print("Total Equivalence Classes:      {}\n", .{db.classes.items.len});
+        std.debug.print("Perfectly Unique Classes (1):   {}\n", .{perfect_classes});
+        std.debug.print("Colliding Classes (>1):         {}  (Exporting to Z3)\n", .{colliding_classes});
+        std.debug.print("Expressions in Collisions:      {}\n", .{trapped_exprs});
+        std.debug.print("Active Evaluation Grid Size:    {}\n", .{eval.TOTAL_SAMPLES});
+        std.debug.print("---------------------\n\n", .{});
         
         if (!verify_mode) break;
 

@@ -27,12 +27,14 @@ pub const EvaluationContext = struct {
 
         var idx: usize = 0;
 
-        // 1) The exhaustive edge-case grid
-        for (config.base_edge_cases) |x| {
-            for (config.base_edge_cases) |y| {
-                for (config.base_edge_cases) |z| {
-                    ctx.setSample(idx, x, y, z);
-                    idx += 1;
+        // 1) The exhaustive edge-case grid (if enabled)
+        if (config.use_cartesian_grid) {
+            for (config.base_edge_cases) |x| {
+                for (config.base_edge_cases) |y| {
+                    for (config.base_edge_cases) |z| {
+                        ctx.setSample(idx, x, y, z);
+                        idx += 1;
+                    }
                 }
             }
         }
