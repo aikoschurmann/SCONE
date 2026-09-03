@@ -1,4 +1,14 @@
 const std = @import("std");
+const CollidingClass = struct {
+    id: u32,
+    size: usize,
+
+    fn lessThan(context: void, a: CollidingClass, b: CollidingClass) bool {
+        _ = context;
+        return a.size > b.size; // sort descending
+    }
+};
+
 const ast = @import("ast.zig");
 const eval = @import("eval.zig");
 const verify = @import("verify.zig");
@@ -103,6 +113,36 @@ pub fn main() !void {
     }
 }
 
+fn verify_worker(
+    results: []?verify.CE,
+    start_idx: usize,
+    end_idx: usize,
+    top_slice: []const CollidingClass,
+    head: []const u32,
+    next: []const u32,
+    arena: *const @import("arena.zig").ExpressionArena,
+    progress: *std.atomic.Value(usize),
+    total_classes: usize,
+) void {
+    const z3_cfg = verify.z3.Z3_mk_config();
+    verify.z3.Z3_set_param_value(z3_cfg, "timeout", "1000"); 
+    const ctx = verify.z3.Z3_mk_context(z3_cfg);
+    defer {
+        verify.z3.Z3_del_context(ctx);
+        verify.z3.Z3_del_config(z3_cfg);
+    }
+    
+    var idx = start_idx;
+    while (idx < end_idx) : (idx += 1) {
+        results[idx] = verify.check_class_ctx(ctx, top_slice[idx].id, head, next, arena);
+        
+        const curr_prog = progress.fetchAdd(1, .monotonic) + 1;
+        if (curr_prog % 100 == 0 or curr_prog == total_classes) {
+            std.debug.print("\rNative Z3: Verifying class {}/{} across CPU cores...", .{curr_prog, total_classes});
+        }
+    }
+}
+
 fn verify_classes(db: *eval.ExpressionDatabase) !usize {
     
     
@@ -137,15 +177,7 @@ fn verify_classes(db: *eval.ExpressionDatabase) !usize {
     
     std.debug.print("Done. Sorting and randomizing for Hybrid Export...\n", .{});
 
-    const CollidingClass = struct {
-        id: u32,
-        size: u32,
-        
-        pub fn lessThan(context: void, a: @This(), b: @This()) bool {
-            _ = context;
-            return a.size > b.size; // Descending sort (Fattest First)
-        }
-    };
+
     
     var colliding_list = std.ArrayList(CollidingClass).init(std.heap.page_allocator);
     defer colliding_list.deinit();
@@ -175,24 +207,50 @@ fn verify_classes(db: *eval.ExpressionDatabase) !usize {
     try ce_file.seekFromEnd(0);
     const ce_writer = ce_file.writer();
 
+    const results = try std.heap.page_allocator.alloc(?verify.CE, top_slice.len);
+    defer std.heap.page_allocator.free(results);
+    
+    var pool: std.Thread.Pool = undefined;
+    try pool.init(.{ .allocator = std.heap.page_allocator });
+    defer pool.deinit();
+    
+    var wg = std.Thread.WaitGroup{};
+    
+    const num_threads = std.Thread.getCpuCount() catch 4;
+    std.debug.print("Native Z3: Spawning parallel hardware proofs across {} CPU cores...\n", .{num_threads});
+    
+    const chunk_size = (top_slice.len + num_threads - 1) / num_threads;
+    
+    var progress = std.atomic.Value(usize).init(0);
+    
+    var t: usize = 0;
+    while (t < num_threads) : (t += 1) {
+        const start_idx = t * chunk_size;
+        const end_idx = @min(start_idx + chunk_size, top_slice.len);
+        if (start_idx >= end_idx) continue;
+        
+        pool.spawnWg(&wg, verify_worker, .{ results, start_idx, end_idx, top_slice, head, next, &db.expr_arena, &progress, top_slice.len });
+    }
+    wg.wait();
+    
     var mistakes: usize = 0;
     const timeouts: usize = 0;
-    _ = timeouts; // Unused for now
     
-    var processed: usize = 0;
-    for (top_slice) |cc| {
-        processed += 1;
-        if (processed % 100 == 0) {
-            std.debug.print("\rNative Z3: Verifying class {}/{} | Found {} CEs...", .{processed, top_slice.len, mistakes});
-        }
-        
-        if (verify.check_class(cc.id, head, next, &db.expr_arena)) |ce| {
+    for (results) |res| {
+        if (res) |ce| {
             try ce_writer.print("{},{},{}\n", .{ce.x, ce.y, ce.z});
             mistakes += 1;
             if (mistakes >= 500) break;
         }
     }
     
-    std.debug.print("\nNative Verification complete. Mistakes found: {}\n", .{mistakes});
+    std.debug.print("Native Verification complete. Mistakes found: {}\n", .{mistakes});
+    
+    // Log telemetry JSON
+    const tel_file = try std.fs.cwd().openFile(config.telemetry_file, .{ .mode = .read_write });
+    defer tel_file.close();
+    try tel_file.seekFromEnd(0);
+    try tel_file.writer().print("{{\"event\": \"verify\", \"classes_verified\": {d}, \"mistakes_found\": {d}, \"timeouts\": {d}}}\n", .{top_slice.len, mistakes, timeouts});
+    
     return mistakes;
 }

@@ -100,14 +100,10 @@ pub fn to_z3(ctx: z3.Z3_context, expr_id: ast.ExprId, arena: *const @import("are
     }
 }
 
-pub fn check_class(class_id: u32, head: []const u32, next: []const u32, arena: *const @import("arena.zig").ExpressionArena) ?CE {
-    const z3_cfg = z3.Z3_mk_config();
-    z3.Z3_set_param_value(z3_cfg, "timeout", "1000"); 
-    const ctx = z3.Z3_mk_context(z3_cfg);
-    defer {
-        z3.Z3_del_context(ctx);
-        z3.Z3_del_config(z3_cfg);
-    }
+pub fn check_class_ctx(ctx: z3.Z3_context, class_id: u32, head: []const u32, next: []const u32, arena: *const @import("arena.zig").ExpressionArena) ?CE {
+    
+
+
     
     const solver = z3.Z3_mk_solver(ctx);
     z3.Z3_solver_inc_ref(ctx, solver);
