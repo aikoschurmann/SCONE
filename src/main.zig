@@ -140,24 +140,54 @@ fn export_classes(db: *eval.ExpressionDatabase) !void {
         class_sizes[cid] += 1;
     }
     
+    std.debug.print("Done. Sorting and randomizing for Hybrid Export...\n", .{});
+
+    const CollidingClass = struct {
+        id: u32,
+        size: u32,
+        
+        pub fn lessThan(context: void, a: @This(), b: @This()) bool {
+            _ = context;
+            return a.size > b.size; // Descending sort (Fattest First)
+        }
+    };
+    
+    var colliding_list = std.ArrayList(CollidingClass).init(std.heap.page_allocator);
+    defer colliding_list.deinit();
+    
+    for (class_sizes, 0..) |sz, cid| {
+        if (sz > 1) {
+            try colliding_list.append(.{ .id = @as(u32, @intCast(cid)), .size = sz });
+        }
+    }
+    
+    // Sort descending by size
+    std.sort.block(CollidingClass, colliding_list.items, {}, CollidingClass.lessThan);
+    
+    // Take the top 500k fattest classes (or less if not enough)
+    const top_n = @min(colliding_list.items.len, 500_000);
+    const top_slice = colliding_list.items[0..top_n];
+    
+    // Randomly shuffle the top slice to ensure Z3 diversity and prevent timeout deadlocks
+    var prng = std.rand.DefaultPrng.init(@as(u64, @intCast(std.time.milliTimestamp())));
+    const random = prng.random();
+    random.shuffle(CollidingClass, top_slice);
+
     std.debug.print("Done. Exporting classes...\n", .{});
 
     var exported: usize = 0;
-    for (head, 0..) |h, class_id| {
-        if (class_sizes[class_id] > 1) {
-            try writer.print("Class {}:\n", .{class_id});
-            
-            var curr: u32 = h;
-            while (curr != 0xFFFFFFFF) {
-                try ast.format_expr(curr, &db.expr_arena, writer);
-                try writer.writeAll("\n");
-                curr = next[curr];
-            }
+    for (top_slice) |cc| {
+        try writer.print("Class {}:\n", .{cc.id});
+        
+        var curr: u32 = head[cc.id];
+        while (curr != 0xFFFFFFFF) {
+            try ast.format_expr(curr, &db.expr_arena, writer);
             try writer.writeAll("\n");
-            exported += 1;
+            curr = next[curr];
         }
+        try writer.writeAll("\n");
+        exported += 1;
 
-        // Only export first N interesting classes to avoid massive files
         if (exported >= config.max_classes_to_export) break;
     }
     
