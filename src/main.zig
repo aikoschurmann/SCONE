@@ -9,31 +9,64 @@ pub fn main() !void {
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
-    const ctx = eval.EvaluationContext.init();
+    var max_cost: usize = 2;
+    var verify_mode: bool = false;
 
-    // Initialize DB (ExpressionArena is segmented lock-free, HashMaps grow dynamically)
-    var db = try eval.ExpressionDatabase.init(allocator);
-    defer db.deinit();
-
-    var enumerator = try enumerate.Enumerator.init(allocator, &db, &ctx);
-    defer enumerator.deinit();
+    var args = std.process.args();
+    _ = args.skip(); // skip binary name
+    while (args.next()) |arg| {
+        if (std.mem.eql(u8, arg, "--cost") or std.mem.eql(u8, arg, "-c")) {
+            const cost_str = args.next() orelse return error.MissingArgument;
+            max_cost = try std.fmt.parseInt(usize, cost_str, 10);
+        } else if (std.mem.eql(u8, arg, "--verify") or std.mem.eql(u8, arg, "-v")) {
+            verify_mode = true;
+        } else if (std.mem.eql(u8, arg, "unpruned")) {
+            // legacy arg, ignore
+        }
+    }
 
     const num_threads = std.Thread.getCpuCount() catch 4;
-    try enumerator.setup_threads(num_threads);
+    
+    var iteration: usize = 1;
+    while (true) {
+        if (verify_mode) {
+            std.debug.print("======================================\n", .{});
+            std.debug.print(" SCONE CEGIS Iteration {}\n", .{iteration});
+            std.debug.print("======================================\n", .{});
+        }
 
-    std.debug.print("SCONE Enumerator Initialized.\n", .{});
+        const ctx = eval.EvaluationContext.init();
 
-    try enumerator.seed_cost_0();
+        var db = try eval.ExpressionDatabase.init(allocator);
+        defer db.deinit();
 
-    // We only go up to Cost 2 for quick verification unless running a full bench
-    try enumerator.orchestrate_cost(1, num_threads);
-    try enumerator.orchestrate_cost(2, num_threads);
-    // try enumerator.orchestrate_cost(3, num_threads);
+        var enumerator = try enumerate.Enumerator.init(allocator, &db, &ctx);
+        defer enumerator.deinit();
 
-    std.debug.print("Total Unique Equivalence Classes: {}\n", .{db.classes.items.len});
-    std.debug.print("Total AST Nodes: {}\n", .{db.expr_arena.len});
-    // Export classes for Z3 verification
-    try export_classes(&db);
+        try enumerator.setup_threads(num_threads);
+        try enumerator.seed_cost_0();
+
+        for (1..max_cost + 1) |c| {
+            try enumerator.orchestrate_cost(c, num_threads);
+        }
+
+        std.debug.print("Total Unique Equivalence Classes: {}\n", .{db.classes.items.len});
+        std.debug.print("Total AST Nodes: {}\n", .{db.expr_arena.len});
+        
+        if (!verify_mode) break;
+
+        try export_classes(&db);
+
+        var child = std.process.Child.init(&[_][]const u8{ "python3", "scripts/verify.py" }, allocator);
+        try child.spawn();
+        const term = try child.wait();
+        
+        if (term == .Exited and term.Exited == 0) {
+            std.debug.print("\n[SUCCESS] PERFECT CLASSES ACHIEVED!\n", .{});
+            break;
+        }
+        iteration += 1;
+    }
 }
 
 fn export_classes(db: *eval.ExpressionDatabase) !void {
