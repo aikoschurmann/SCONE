@@ -145,7 +145,7 @@ pub fn isCommutative(op: ast.BinOp) bool {
 
         const chunk_size = 512;
 
-        if (k >= 1) {
+        if (false and k >= 1) {
             const c1 = k - 1;
             if (c1 < self.exprs_by_cost.items.len) {
                 const len = self.exprs_by_cost.items[c1].items.len;
@@ -167,7 +167,7 @@ pub fn isCommutative(op: ast.BinOp) bool {
             }
         }
 
-        if (k >= 1) {
+        if (false and k >= 1) {
             const target = k - 1;
             for (0..target + 1) |c1| {
                 const c2 = target - c1;
@@ -195,7 +195,7 @@ pub fn isCommutative(op: ast.BinOp) bool {
             }
         }
 
-        if (k >= 1) {
+        if (false and k >= 1) {
             const target = k - 1;
             for (0..target + 1) |c1| {
                 for (0..target - c1 + 1) |c2| {
@@ -304,6 +304,9 @@ pub fn isCommutative(op: ast.BinOp) bool {
         var workers_finished = try self.allocator.alloc(bool, num_threads);
         defer self.allocator.free(workers_finished);
         @memset(workers_finished, false);
+        for (0..num_threads) |w| {
+            self.workers_done[w].store(false, .release);
+        }
         
         while (active_workers > 0) {
             for (0..num_threads) |w| {
