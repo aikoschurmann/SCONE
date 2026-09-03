@@ -104,7 +104,7 @@ pub fn main() !void {
         if (!verify_mode) break;
 
 
-        const mistakes = try verify_classes(&db);
+        const mistakes = try verify_classes(&db, iteration);
         if (mistakes == 0) {
             std.debug.print("\n[SUCCESS] PERFECT CLASSES ACHIEVED!\n", .{});
             break;
@@ -143,7 +143,8 @@ fn verify_worker(
     }
 }
 
-fn verify_classes(db: *eval.ExpressionDatabase) !usize {
+fn verify_classes(db: *eval.ExpressionDatabase, iteration: usize) !usize {
+    var timer = try std.time.Timer.start();
     
     
     
@@ -250,7 +251,8 @@ fn verify_classes(db: *eval.ExpressionDatabase) !usize {
     const tel_file = try std.fs.cwd().openFile(config.telemetry_file, .{ .mode = .read_write });
     defer tel_file.close();
     try tel_file.seekFromEnd(0);
-    try tel_file.writer().print("{{\"event\": \"verify\", \"classes_verified\": {d}, \"mistakes_found\": {d}, \"timeouts\": {d}}}\n", .{top_slice.len, mistakes, timeouts});
+    const elapsed_s = @as(f64, @floatFromInt(timer.read())) / std.time.ns_per_s;
+    try tel_file.writer().print("{{\"event\": \"verify\", \"elapsed_s\": {d:.2}, \"iteration\": {d}, \"classes_verified\": {d}, \"mistakes_found\": {d}, \"timeouts\": {d}}}\n", .{elapsed_s, iteration, top_slice.len, mistakes, timeouts});
     
     return mistakes;
 }
