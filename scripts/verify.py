@@ -64,22 +64,30 @@ def check_class_worker(task):
     base_ast = Parser(exprs[0]).parse()
     base_z3 = to_z3(base_ast, x, y, z)
     
+    # 1. Z3 Tactic for Hardware Logic (Fast Bit-Vector SAT)
+    tactic = z3.Then('simplify', 'bit-blast', 'aig', 'sat')
+    solver = tactic.solver()
+    solver.set('timeout', 1000) 
+
+    # 2. Multi-Target Batching
+    conditions = []
     for expr_str in exprs[1:]:
         ast = Parser(expr_str).parse()
         expr_z3 = to_z3(ast, x, y, z)
+        conditions.append(base_z3 != expr_z3)
         
-        solver = z3.Solver()
-        solver.set('timeout', 1000) # 1 second timeout per check to prevent NP-hard hangs
-        solver.add(base_z3 != expr_z3)
-        res = solver.check()
-        if res == z3.sat:
-            m = solver.model()
-            xv = m[x].as_signed_long() if m[x] is not None else 0
-            yv = m[y].as_signed_long() if m[y] is not None else 0
-            zv = m[z].as_signed_long() if m[z] is not None else 0
-            return (class_id, exprs[0], expr_str, xv, yv, zv)
-        elif res == z3.unknown:
-            return (class_id, "TIMEOUT", "", 0, 0, 0)
+    solver.add(z3.Or(*conditions))
+    res = solver.check()
+    
+    if res == z3.sat:
+        m = solver.model()
+        xv = m[x].as_signed_long() if m[x] is not None else 0
+        yv = m[y].as_signed_long() if m[y] is not None else 0
+        zv = m[z].as_signed_long() if m[z] is not None else 0
+        return (class_id, exprs[0], "BATCH_MISTAKE", xv, yv, zv)
+    elif res == z3.unknown:
+        return (class_id, "TIMEOUT", "", 0, 0, 0)
+        
     return None
 
 def main():
