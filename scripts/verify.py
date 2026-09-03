@@ -68,13 +68,17 @@ def check_class_worker(task):
         expr_z3 = to_z3(ast, x, y, z)
         
         solver = z3.Solver()
+        solver.set('timeout', 1000) # 1 second timeout per check to prevent NP-hard hangs
         solver.add(base_z3 != expr_z3)
-        if solver.check() == z3.sat:
+        res = solver.check()
+        if res == z3.sat:
             m = solver.model()
             xv = m[x].as_signed_long() if m[x] is not None else 0
             yv = m[y].as_signed_long() if m[y] is not None else 0
             zv = m[z].as_signed_long() if m[z] is not None else 0
             return (class_id, exprs[0], expr_str, xv, yv, zv)
+        elif res == z3.unknown:
+            return (class_id, "TIMEOUT", "", 0, 0, 0)
     return None
 
 def main():
@@ -109,11 +113,18 @@ def main():
     mistakes = 0
     ces_found = set()
     
+    total_classes = len(classes)
+    processed = 0
+    
     with open('counterexamples.txt', 'a') as ce_writer:
         for res in results:
+            processed += 1
+            if processed % 10 == 0:
+                print(f"\rVerifying: {processed}/{total_classes} classes ({mistakes} mistakes, {len(ces_found)} unique CEs)...", end="", flush=True)
+
             if res is not None:
                 cid, e1, e2, xv, yv, zv = res
-                print(f"MISTAKE IN {cid}! {e1} != {e2} (CE: {xv},{yv},{zv})")
+                print(f"\rMISTAKE IN {cid}! {e1} != {e2} (CE: {xv},{yv},{zv})")
                 
                 # Deduplicate counterexamples before writing to file
                 ce_key = (xv, yv, zv)
@@ -125,11 +136,12 @@ def main():
                 
                 # Don't overwhelm Scone with too many CEs at once, max 500 per iteration
                 if len(ces_found) >= 500:
-                    print("Reached 500 unique counterexamples. Stopping early to inject.")
+                    print("\nReached 500 unique counterexamples. Stopping early to inject.")
                     pool.terminate()
                     break
 
-    print(f"Verification complete. Mistakes found: {mistakes}. Unique CEs appended: {len(ces_found)}")
+    print(f"\nVerification complete. Mistakes found: {mistakes}. Unique CEs appended: {len(ces_found)}")
+    sys.exit(0 if mistakes == 0 else 1)
 
 if __name__ == '__main__':
     main()

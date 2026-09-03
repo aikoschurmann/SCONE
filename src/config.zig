@@ -5,9 +5,9 @@ const std = @import("std");
 pub const use_pruning = false;
 
 /// Evaluation Mode Configuration
-/// If false, the $O(N^3)$ Cartesian grid of base_edge_cases is disabled, 
+/// If false, the $O(N^3)$ Cartesian grid of base_edge_cases is disabled,
 /// and the engine relies entirely on CEGIS counterexamples and random sampling.
-pub const use_cartesian_grid = true;
+pub const use_cartesian_grid = false;
 
 /// Evaluation Grid Configuration
 /// These are the structured boundary values used to evaluate expressions.

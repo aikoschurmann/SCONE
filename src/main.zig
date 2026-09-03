@@ -47,7 +47,7 @@ pub fn main() !void {
         try enumerator.seed_cost_0();
 
         for (1..max_cost + 1) |c| {
-            try enumerator.orchestrate_cost(c, num_threads);
+            try enumerator.orchestrate_cost(c, num_threads, iteration);
         }
 
         var perfect_classes: usize = 0;
@@ -80,11 +80,21 @@ pub fn main() !void {
         std.debug.print("Active Evaluation Grid Size:    {}\n", .{eval.TOTAL_SAMPLES});
         std.debug.print("---------------------\n\n", .{});
         
+        const tel_file = std.fs.cwd().openFile("telemetry.jsonl", .{ .mode = .read_write }) catch |err| switch (err) {
+            error.FileNotFound => try std.fs.cwd().createFile("telemetry.jsonl", .{}),
+            else => return err,
+        };
+        try tel_file.seekFromEnd(0);
+        try tel_file.writer().print("{{\"event\": \"metrics\", \"iteration\": {d}, \"total_ast_nodes\": {d}, \"total_classes\": {d}, \"perfect_classes\": {d}, \"colliding_classes\": {d}, \"exprs_in_collisions\": {d}, \"eval_grid_size\": {d}}}\n", .{iteration, db.expr_arena.len, db.classes.items.len, perfect_classes, colliding_classes, trapped_exprs, eval.TOTAL_SAMPLES});
+        tel_file.close();
+
         if (!verify_mode) break;
 
         try export_classes(&db);
 
-        var child = std.process.Child.init(&[_][]const u8{ "python3", "scripts/verify.py" }, allocator);
+        var iter_str_buf: [32]u8 = undefined;
+        const iter_str = std.fmt.bufPrint(&iter_str_buf, "{d}", .{iteration}) catch "1";
+        var child = std.process.Child.init(&[_][]const u8{ "python3", "scripts/verify.py", iter_str }, allocator);
         try child.spawn();
         const term = try child.wait();
         
