@@ -2,13 +2,11 @@ const std = @import("std");
 const ast = @import("ast.zig");
 const expr_arena = @import("arena.zig");
 
-pub const BATCH_SIZE = 64;
-pub const NUM_EDGE_CASES = 26;
-pub const EDGE_GRID_SAMPLES = NUM_EDGE_CASES * NUM_EDGE_CASES * NUM_EDGE_CASES; // 4096, exhaustive
-pub const NUM_RANDOM_SAMPLES = EDGE_GRID_SAMPLES; // 1:1 with the edge grid; tune independently
-pub const TOTAL_SAMPLES = EDGE_GRID_SAMPLES + NUM_RANDOM_SAMPLES; // 8192
-pub const NUM_BATCHES = (TOTAL_SAMPLES + BATCH_SIZE - 1) / BATCH_SIZE;
+const config = @import("config.zig");
 
+pub const BATCH_SIZE = 64;
+pub const TOTAL_SAMPLES = config.total_samples;
+pub const NUM_BATCHES = (TOTAL_SAMPLES + BATCH_SIZE - 1) / BATCH_SIZE;
 pub const Vector64 = @Vector(BATCH_SIZE, u32);
 
 pub const EvaluationContext = struct {
@@ -27,21 +25,12 @@ pub const EvaluationContext = struct {
     pub fn init() EvaluationContext {
         var ctx: EvaluationContext = undefined;
 
-        const edge_cases = [_]u32{
-            0, 1, 2, 3, 4, 8, 16, 31, 32,
-            0xFFFFFFFF, 0xFFFFFFFE, 0xFFFFFFFD, 0xFFFFFFFC, // -1, -2, -3, -4
-            0xFFFFFFF8, 0xFFFFFFF0, 0xFFFFFFE1, 0xFFFFFFE0,  // -8, -16, -31, -32
-            0x80000000, 0x7FFFFFFF, 0x80000001, 0x7FFFFFFE,  // INT_MIN, INT_MAX, and their ±1 neighbors
-            0xFFFF, 0x55555555, 0xAAAAAAAA,
-        };
-
         var idx: usize = 0;
 
-        // 1) The full, untouched exhaustive 16x16x16 edge-case grid, exactly
-        //    as before. Every combination of boundary values is covered.
-        for (edge_cases) |x| {
-            for (edge_cases) |y| {
-                for (edge_cases) |z| {
+        // 1) The exhaustive edge-case grid
+        for (config.base_edge_cases) |x| {
+            for (config.base_edge_cases) |y| {
+                for (config.base_edge_cases) |z| {
                     ctx.setSample(idx, x, y, z);
                     idx += 1;
                 }
@@ -54,7 +43,7 @@ pub const EvaluationContext = struct {
         //    edge grid but diverge on generic inputs, without weakening any
         //    of the existing boundary coverage.
         // Read counterexamples from CEGIS loop
-        const ce_file = std.fs.cwd().openFile("counterexamples.txt", .{}) catch null;
+        const ce_file = std.fs.cwd().openFile(config.counterexamples_file, .{}) catch null;
         if (ce_file) |f| {
             defer f.close();
             var buf_reader = std.io.bufferedReader(f.reader());
@@ -141,20 +130,13 @@ pub const ExpressionDatabase = struct {
     classes: std.ArrayList(EquivalenceClass),
     fp_to_class: std.AutoHashMap(FingerprintHash, SmallClassList),
 
-    pub fn init(
-        allocator: std.mem.Allocator,
-        expected_expr_count: usize,
-        expected_class_count: usize,
-    ) !ExpressionDatabase {
-        var fp_map = std.AutoHashMap(FingerprintHash, SmallClassList).init(allocator);
-        try fp_map.ensureTotalCapacity(@as(u32, @intCast(expected_class_count)));
-
+    pub fn init(allocator: std.mem.Allocator) !ExpressionDatabase {
         return .{
             .allocator = allocator,
-            .expr_arena = try expr_arena.ExpressionArena.init(allocator, expected_expr_count),
-            .expr_to_class = try std.ArrayList(ClassId).initCapacity(allocator, expected_expr_count),
-            .classes = try std.ArrayList(EquivalenceClass).initCapacity(allocator, expected_class_count),
-            .fp_to_class = fp_map,
+            .expr_arena = try expr_arena.ExpressionArena.init(allocator),
+            .expr_to_class = std.ArrayList(ClassId).init(allocator),
+            .classes = std.ArrayList(EquivalenceClass).init(allocator),
+            .fp_to_class = std.AutoHashMap(FingerprintHash, SmallClassList).init(allocator),
         };
     }
 
@@ -242,3 +224,4 @@ pub const ExpressionDatabase = struct {
         return hasher.final();
     }
 };
+

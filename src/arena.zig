@@ -1,37 +1,65 @@
 const std = @import("std");
 const ast = @import("ast.zig");
 
-/// A contiguous memory block for storing all generated expressions.
-/// Complex expressions are built by referencing the `ExprId` of existing
-/// sub-expressions, avoiding per-node heap allocations.
+/// A Segmented Arena for lock-free concurrent reads.
+/// Instead of a single contiguous array that might reallocate and move in memory,
+/// we allocate fixed-size chunks. Once a chunk is allocated, it NEVER moves.
+/// This allows worker threads to safely read from old chunks while the main thread
+/// allocates new chunks, eliminating the need for "magic number" pre-allocations.
 pub const ExpressionArena = struct {
-    allocator: std.mem.Allocator,
-    nodes: std.ArrayList(ast.Expr),
+    pub const CHUNK_SIZE = 65536; // 64K nodes per chunk
+    const Chunk = [CHUNK_SIZE]ast.Expr;
 
-    /// Initializes the arena with a pre-allocated capacity.
-    /// Returns an OutOfMemory error (!) if the OS denies the allocation.
-    pub fn init(allocator: std.mem.Allocator, initial_capacity: usize) !ExpressionArena {
+    allocator: std.mem.Allocator,
+    chunks: std.ArrayList(*Chunk),
+    len: usize,
+
+    pub fn init(allocator: std.mem.Allocator) !ExpressionArena {
+        // Pre-allocate the chunk pointer array to hold enough pointers for billions of nodes.
+        // 10,000 chunks * 64K = 655 million nodes limit, but the array of pointers only takes 80KB!
+        // This ensures the `chunks.items` pointer itself never moves during normal operation,
+        // and even if it did, worker threads don't read the chunk pointer array directly via an iterator,
+        // they fetch the chunk pointer, which is safe as long as the array doesn't resize while being accessed.
+        // Wait, actually the array OF POINTERS could move if it resizes.
+        // We pre-allocate it to 100,000 to hold 6.5 Billion nodes safely without ever resizing.
+        // 100,000 pointers * 8 bytes = 800 KB of RAM. Extremely lightweight.
+        const chunks = try std.ArrayList(*Chunk).initCapacity(allocator, 100_000);
+        
         return .{
             .allocator = allocator,
-            .nodes = try std.ArrayList(ast.Expr).initCapacity(allocator, initial_capacity),
+            .chunks = chunks,
+            .len = 0,
         };
     }
 
-    /// Safely frees all memory allocated by the arena.
     pub fn deinit(self: *ExpressionArena) void {
-        self.nodes.deinit();
+        for (self.chunks.items) |chunk| {
+            self.allocator.destroy(chunk);
+        }
+        self.chunks.deinit();
     }
 
-    /// Appends a new expression and returns its index.
-    /// Returns an OutOfMemory error (!) if the array needs to grow and RAM is exhausted.
     pub fn add(self: *ExpressionArena, expr: ast.Expr) !ast.ExprId {
-        const id = @as(ast.ExprId, @intCast(self.nodes.items.len));
-        try self.nodes.append(expr);
+        const id = @as(ast.ExprId, @intCast(self.len));
+        
+        const chunk_idx = id / CHUNK_SIZE;
+        const item_idx = id % CHUNK_SIZE;
+        
+        if (chunk_idx >= self.chunks.items.len) {
+            // Allocate a new chunk
+            const new_chunk = try self.allocator.create(Chunk);
+            self.chunks.appendAssumeCapacity(new_chunk);
+        }
+        
+        self.chunks.items[chunk_idx][item_idx] = expr;
+        self.len += 1;
+        
         return id;
     }
 
-    /// Retrieves an expression by its index.
     pub fn get(self: *const ExpressionArena, id: ast.ExprId) ast.Expr {
-        return self.nodes.items[id];
+        const chunk_idx = id / CHUNK_SIZE;
+        const item_idx = id % CHUNK_SIZE;
+        return self.chunks.items[chunk_idx][item_idx];
     }
 };

@@ -1,6 +1,7 @@
 const std = @import("std");
 const ast = @import("ast.zig");
 const eval = @import("eval.zig");
+const config = @import("config.zig");
 
 fn RingBuffer(comptime T: type, comptime capacity: usize) type {
     return struct {

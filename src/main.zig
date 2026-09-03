@@ -2,8 +2,7 @@ const std = @import("std");
 const ast = @import("ast.zig");
 const eval = @import("eval.zig");
 const enumerate = @import("enumerate.zig");
-
-pub const USE_PRUNING = false;
+const config = @import("config.zig");
 
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
@@ -12,8 +11,8 @@ pub fn main() !void {
 
     const ctx = eval.EvaluationContext.init();
 
-    // Allocate DB with enough capacity for Cost 3
-    var db = try eval.ExpressionDatabase.init(allocator, 20_000_000, 20_000_000);
+    // Initialize DB (ExpressionArena is segmented lock-free, HashMaps grow dynamically)
+    var db = try eval.ExpressionDatabase.init(allocator);
     defer db.deinit();
 
     var enumerator = try enumerate.Enumerator.init(allocator, &db, &ctx);
@@ -32,13 +31,13 @@ pub fn main() !void {
     // try enumerator.orchestrate_cost(3, num_threads);
 
     std.debug.print("Total Unique Equivalence Classes: {}\n", .{db.classes.items.len});
-    std.debug.print("Total AST Nodes: {}\n", .{db.expr_arena.nodes.items.len});
+    std.debug.print("Total AST Nodes: {}\n", .{db.expr_arena.len});
     // Export classes for Z3 verification
     try export_classes(&db);
 }
 
 fn export_classes(db: *eval.ExpressionDatabase) !void {
-    var out_file = try std.fs.cwd().createFile("classes.txt", .{});
+    var out_file = try std.fs.cwd().createFile(config.verification_export_file, .{});
     defer out_file.close();
     var writer = out_file.writer();
 
@@ -64,8 +63,8 @@ fn export_classes(db: *eval.ExpressionDatabase) !void {
             exported += 1;
         }
 
-        // Only export first 100 interesting classes to avoid massive files
-        if (exported >= 100) break;
+        // Only export first N interesting classes to avoid massive files
+        if (exported >= config.max_classes_to_export) break;
     }
     std.debug.print("Exported {} classes with collisions to classes.txt for Z3 verification.\n", .{exported});
 }
