@@ -311,7 +311,8 @@ pub const Enumerator = struct {
         }
 
         var exprs_processed: usize = 0;
-        var last_print_time = std.time.milliTimestamp();
+        const start_time = std.time.milliTimestamp();
+        var last_print_time = start_time;
 
         while (active_workers > 0) {
             for (0..num_threads) |w| {
@@ -334,13 +335,18 @@ pub const Enumerator = struct {
             
             const now = std.time.milliTimestamp();
             if (now - last_print_time > 500) {
-                std.debug.print("\rCost {}: Processed {} expressions ({} unique classes)...", .{k, exprs_processed, self.db.classes.items.len});
+                const elapsed_s = @as(f64, @floatFromInt(now - start_time)) / 1000.0;
+                const speed = if (elapsed_s > 0) @as(f64, @floatFromInt(exprs_processed)) / elapsed_s else 0.0;
+                std.debug.print("\rCost {d}: Processed {d} exprs ({d} unique) | {d:.1} expr/s | elapsed: {d:.1}s...   ", .{k, exprs_processed, self.db.classes.items.len, speed, elapsed_s});
                 last_print_time = now;
             }
             
             std.atomic.spinLoopHint();
         }
-        std.debug.print("\rCost {}: Processed {} expressions ({} unique classes) - DONE.\n", .{k, exprs_processed, self.db.classes.items.len});
+        const final_now = std.time.milliTimestamp();
+        const total_elapsed_s = @as(f64, @floatFromInt(final_now - start_time)) / 1000.0;
+        const final_speed = if (total_elapsed_s > 0) @as(f64, @floatFromInt(exprs_processed)) / total_elapsed_s else 0.0;
+        std.debug.print("\rCost {d}: Processed {d} exprs ({d} unique) | {d:.1} expr/s | elapsed: {d:.1}s - DONE.   \n", .{k, exprs_processed, self.db.classes.items.len, final_speed, total_elapsed_s});
 
         for (0..num_threads) |w| {
             threads[w].join();
