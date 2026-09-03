@@ -8,6 +8,10 @@ pub fn build(b: *std.Build) void {
         .target = b.standardTargetOptions(.{}),
         .optimize = b.standardOptimizeOption(.{}),
     });
+    exe.linkLibC();
+    exe.linkSystemLibrary("z3");
+    exe.addIncludePath(.{ .cwd_relative = "/opt/homebrew/include" });
+    exe.addLibraryPath(.{ .cwd_relative = "/opt/homebrew/lib" });
 
     // 2. Tell Zig to install the finished file into the zig-out/ folder
     b.installArtifact(exe);
