@@ -292,7 +292,6 @@ pub const Enumerator = struct {
 
     pub fn orchestrate_cost(self: *Enumerator, k: usize, num_threads: usize) !void {
         try self.prepare_jobs_for_cost(k);
-        std.debug.print("Cost {} jobs generated: {}\n", .{ k, self.jobs.items.len });
         var cost_list = std.ArrayList(ast.ExprId).init(self.allocator);
         self.job_counter.store(0, .release);
 
@@ -311,24 +310,37 @@ pub const Enumerator = struct {
             self.workers_done[w].store(false, .release);
         }
 
+        var exprs_processed: usize = 0;
+        var last_print_time = std.time.milliTimestamp();
+
         while (active_workers > 0) {
             for (0..num_threads) |w| {
                 if (workers_finished[w]) continue;
 
                 while (self.queues[w].pop()) |res| {
                     try self.register_expr(&cost_list, res.expr, res.hash);
+                    exprs_processed += 1;
                 }
 
                 if (self.workers_done[w].load(.acquire)) {
                     while (self.queues[w].pop()) |res| {
                         try self.register_expr(&cost_list, res.expr, res.hash);
+                        exprs_processed += 1;
                     }
                     workers_finished[w] = true;
                     active_workers -= 1;
                 }
             }
+            
+            const now = std.time.milliTimestamp();
+            if (now - last_print_time > 500) {
+                std.debug.print("\rCost {}: Processed {} expressions ({} unique classes)...", .{k, exprs_processed, self.db.classes.items.len});
+                last_print_time = now;
+            }
+            
             std.atomic.spinLoopHint();
         }
+        std.debug.print("\rCost {}: Processed {} expressions ({} unique classes) - DONE.\n", .{k, exprs_processed, self.db.classes.items.len});
 
         for (0..num_threads) |w| {
             threads[w].join();

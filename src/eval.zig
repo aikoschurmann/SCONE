@@ -44,6 +44,7 @@ pub const EvaluationContext = struct {
         //    of the existing boundary coverage.
         // Read counterexamples from CEGIS loop
         const ce_file = std.fs.cwd().openFile(config.counterexamples_file, .{}) catch null;
+        var ce_count: usize = 0;
         if (ce_file) |f| {
             defer f.close();
             var buf_reader = std.io.bufferedReader(f.reader());
@@ -62,12 +63,15 @@ pub const EvaluationContext = struct {
                 const uy = @as(u32, @bitCast(@as(i32, @truncate(y_val))));
                 const uz = @as(u32, @bitCast(@as(i32, @truncate(z_val))));
                 ctx.setSample(idx, ux, uy, uz);
-                std.debug.print("Loaded CE: {}, {}, {}\n", .{ux, uy, uz});
+                ce_count += 1;
                 idx += 1;
                 if (idx >= TOTAL_SAMPLES) break;
             }
         }
         
+        if (ce_count > 0) {
+            std.debug.print("Loaded {} counterexamples from Z3.\n", .{ce_count});
+        }
         var prng = std.Random.DefaultPrng.init(0xC0FFEE_C0FFEE);
         const rand = prng.random();
         while (idx < TOTAL_SAMPLES) : (idx += 1) {
