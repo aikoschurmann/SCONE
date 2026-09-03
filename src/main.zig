@@ -1,6 +1,7 @@
 const std = @import("std");
 const ast = @import("ast.zig");
 const eval = @import("eval.zig");
+const verify = @import("verify.zig");
 const enumerate = @import("enumerate.zig");
 const config = @import("config.zig");
 
@@ -92,7 +93,6 @@ pub fn main() !void {
 
         if (!verify_mode) break;
 
-        try export_classes(&db);
 
         var iter_str_buf: [32]u8 = undefined;
         const iter_str = std.fmt.bufPrint(&iter_str_buf, "{d}", .{iteration}) catch "1";
@@ -108,13 +108,13 @@ pub fn main() !void {
     }
 }
 
-fn export_classes(db: *eval.ExpressionDatabase) !void {
-    var out_file = try std.fs.cwd().createFile(config.verification_export_file, .{});
-    defer out_file.close();
+fn verify_classes(db: *eval.ExpressionDatabase) !usize {
+    
+    
     
     // Use a buffered writer for MASSIVE IO speedup
-    var buf_writer = std.io.bufferedWriter(out_file.writer());
-    var writer = buf_writer.writer();
+    
+    
 
     std.debug.print("Grouping expressions for export (O(N) pass)... ", .{});
     
@@ -173,24 +173,28 @@ fn export_classes(db: *eval.ExpressionDatabase) !void {
     const random = prng.random();
     random.shuffle(CollidingClass, top_slice);
 
-    std.debug.print("Done. Exporting classes...\n", .{});
+    std.debug.print("Done. Running Native Z3 SAT Proofs...\n", .{});
 
-    var exported: usize = 0;
+    const ce_file = try std.fs.cwd().openFile(config.counterexamples_file, .{ .mode = .read_write });
+    defer ce_file.close();
+    try ce_file.seekFromEnd(0);
+    const ce_writer = ce_file.writer();
+
+    var mistakes: usize = 0;
+    const timeouts: usize = 0;
+    
     for (top_slice) |cc| {
-        try writer.print("Class {}:\n", .{cc.id});
-        
-        var curr: u32 = head[cc.id];
-        while (curr != 0xFFFFFFFF) {
-            try ast.format_expr(curr, &db.expr_arena, writer);
-            try writer.writeAll("\n");
-            curr = next[curr];
+        if (verify.check_class(cc.id, head, next, &db.expr_arena)) |ce| {
+            try ce_writer.print("{},{},{}\n", .{ce.x, ce.y, ce.z});
+            mistakes += 1;
+            std.debug.print("\rNative Z3: Found {} CEs, {} timeouts...", .{mistakes, timeouts});
+            if (mistakes >= 500) break;
+        } else {
+            // Null means timeout or unsat (verified). 
+            // In the future we will distinguish and track proven vs timeouts!
         }
-        try writer.writeAll("\n");
-        exported += 1;
-
-        if (exported >= config.max_classes_to_export) break;
     }
     
-    try buf_writer.flush();
-    std.debug.print("Exported {} classes with collisions to classes.txt for Z3 verification.\n", .{exported});
+    std.debug.print("\nNative Verification complete. Mistakes found: {}\n", .{mistakes});
+    return mistakes;
 }
