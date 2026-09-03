@@ -138,7 +138,7 @@ fn verify_worker(
         
         const curr_prog = progress.fetchAdd(1, .monotonic) + 1;
         if (curr_prog % 100 == 0 or curr_prog == total_classes) {
-            std.debug.print("\rNative Z3: Verifying class {}/{} across CPU cores...", .{curr_prog, total_classes});
+            std.debug.print("\rZ3 SAT Proofs: {}/{} classes verified...", .{curr_prog, total_classes});
         }
     }
 }
@@ -152,7 +152,7 @@ fn verify_classes(db: *eval.ExpressionDatabase, iteration: usize) !usize {
     
     
 
-    std.debug.print("Grouping expressions for export (O(N) pass)... ", .{});
+    std.debug.print("Exporting collisions to Z3...\n", .{});
     
     // O(N) Linked-List Grouping to avoid O(N*C) 500-trillion loop
     const num_exprs = db.expr_arena.len;
@@ -176,7 +176,7 @@ fn verify_classes(db: *eval.ExpressionDatabase, iteration: usize) !usize {
         class_sizes[cid] += 1;
     }
     
-    std.debug.print("Done. Sorting and randomizing for Hybrid Export...\n", .{});
+    
 
 
     
@@ -201,7 +201,7 @@ fn verify_classes(db: *eval.ExpressionDatabase, iteration: usize) !usize {
     const random = prng.random();
     random.shuffle(CollidingClass, top_slice);
 
-    std.debug.print("Done. Running Native Z3 SAT Proofs...\n", .{});
+    
 
     const ce_file = try std.fs.cwd().openFile(config.counterexamples_file, .{ .mode = .read_write });
     defer ce_file.close();
@@ -218,7 +218,7 @@ fn verify_classes(db: *eval.ExpressionDatabase, iteration: usize) !usize {
     var wg = std.Thread.WaitGroup{};
     
     const num_threads = std.Thread.getCpuCount() catch 4;
-    std.debug.print("Native Z3: Spawning parallel hardware proofs across {} CPU cores...\n", .{num_threads});
+    std.debug.print("Z3 SAT Solver: Spawning {} parallel threads across CPU cores...\n", .{num_threads});
     
     const chunk_size = (top_slice.len + num_threads - 1) / num_threads;
     
@@ -245,13 +245,13 @@ fn verify_classes(db: *eval.ExpressionDatabase, iteration: usize) !usize {
         }
     }
     
-    std.debug.print("Native Verification complete. Mistakes found: {}\n", .{mistakes});
+    const elapsed_s = @as(f64, @floatFromInt(timer.read())) / std.time.ns_per_s;
+    std.debug.print("\nZ3 Verification complete in {d:.2}s. Mistakes found: {}\n", .{elapsed_s, mistakes});
     
     // Log telemetry JSON
     const tel_file = try std.fs.cwd().openFile(config.telemetry_file, .{ .mode = .read_write });
     defer tel_file.close();
     try tel_file.seekFromEnd(0);
-    const elapsed_s = @as(f64, @floatFromInt(timer.read())) / std.time.ns_per_s;
     try tel_file.writer().print("{{\"event\": \"verify\", \"elapsed_s\": {d:.2}, \"iteration\": {d}, \"classes_verified\": {d}, \"mistakes_found\": {d}, \"timeouts\": {d}}}\n", .{elapsed_s, iteration, top_slice.len, mistakes, timeouts});
     
     return mistakes;
