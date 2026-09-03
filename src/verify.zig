@@ -109,18 +109,16 @@ pub fn check_class(class_id: u32, head: []const u32, next: []const u32, arena: *
         z3.Z3_del_config(z3_cfg);
     }
     
-    const t_simp = z3.Z3_mk_tactic(ctx, "simplify");
-    const t_bb = z3.Z3_mk_tactic(ctx, "bit-blast");
-    const t_aig = z3.Z3_mk_tactic(ctx, "aig");
-    const t_sat = z3.Z3_mk_tactic(ctx, "sat");
-    
-    const t1 = z3.Z3_tactic_and_then(ctx, t_simp, t_bb);
-    const t2 = z3.Z3_tactic_and_then(ctx, t1, t_aig);
-    const t_final = z3.Z3_tactic_and_then(ctx, t2, t_sat);
-    
-    const solver = z3.Z3_mk_solver_from_tactic(ctx, t_final);
+    const solver = z3.Z3_mk_solver(ctx);
     z3.Z3_solver_inc_ref(ctx, solver);
     defer z3.Z3_solver_dec_ref(ctx, solver);
+    
+    const params = z3.Z3_mk_params(ctx);
+    z3.Z3_params_inc_ref(ctx, params);
+    defer z3.Z3_params_dec_ref(ctx, params);
+    const sym_timeout = z3.Z3_mk_string_symbol(ctx, "timeout");
+    z3.Z3_params_set_uint(ctx, params, sym_timeout, 1000);
+    z3.Z3_solver_set_params(ctx, solver, params);
 
     const sort = z3.Z3_mk_bv_sort(ctx, 32);
     

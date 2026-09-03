@@ -94,13 +94,8 @@ pub fn main() !void {
         if (!verify_mode) break;
 
 
-        var iter_str_buf: [32]u8 = undefined;
-        const iter_str = std.fmt.bufPrint(&iter_str_buf, "{d}", .{iteration}) catch "1";
-        var child = std.process.Child.init(&[_][]const u8{ "python3", "scripts/verify.py", iter_str }, allocator);
-        try child.spawn();
-        const term = try child.wait();
-        
-        if (term == .Exited and term.Exited == 0) {
+        const mistakes = try verify_classes(&db);
+        if (mistakes == 0) {
             std.debug.print("\n[SUCCESS] PERFECT CLASSES ACHIEVED!\n", .{});
             break;
         }
@@ -182,16 +177,19 @@ fn verify_classes(db: *eval.ExpressionDatabase) !usize {
 
     var mistakes: usize = 0;
     const timeouts: usize = 0;
+    _ = timeouts; // Unused for now
     
+    var processed: usize = 0;
     for (top_slice) |cc| {
+        processed += 1;
+        if (processed % 100 == 0) {
+            std.debug.print("\rNative Z3: Verifying class {}/{} | Found {} CEs...", .{processed, top_slice.len, mistakes});
+        }
+        
         if (verify.check_class(cc.id, head, next, &db.expr_arena)) |ce| {
             try ce_writer.print("{},{},{}\n", .{ce.x, ce.y, ce.z});
             mistakes += 1;
-            std.debug.print("\rNative Z3: Found {} CEs, {} timeouts...", .{mistakes, timeouts});
             if (mistakes >= 500) break;
-        } else {
-            // Null means timeout or unsat (verified). 
-            // In the future we will distinguish and track proven vs timeouts!
         }
     }
     
