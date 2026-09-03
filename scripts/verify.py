@@ -1,6 +1,7 @@
 import sys
 import z3
 import multiprocessing
+import time
 
 class Parser:
     def __init__(self, s):
@@ -82,6 +83,7 @@ def check_class_worker(task):
     return None
 
 def main():
+    start_time = time.time()
     classes = []
     current_class = None
     current_exprs = []
@@ -150,9 +152,11 @@ def main():
     
     import json
     iteration = int(sys.argv[1]) if len(sys.argv) > 1 else 1
+    elapsed_s = round(time.time() - start_time, 2)
     with open('out/telemetry.jsonl', 'a') as f:
         f.write(json.dumps({
             "event": "verify",
+            "elapsed_s": elapsed_s,
             "iteration": iteration,
             "classes_verified": processed,
             "mistakes_found": mistakes,
