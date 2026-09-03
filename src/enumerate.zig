@@ -34,7 +34,7 @@ fn RingBuffer(comptime T: type, comptime capacity: usize) type {
 
 const Result = struct {
     expr: ast.Expr,
-    fp: eval.Fingerprint,
+    hash: eval.FingerprintHash,
 };
 
 const JobType = enum { unop, binop, select };
@@ -55,7 +55,8 @@ pub const Enumerator = struct {
     ctx: *const eval.EvaluationContext,
     exprs_by_cost: std.ArrayList(std.ArrayList(ast.ExprId)),
     allocator: std.mem.Allocator,
-    
+    total_evaluations: std.atomic.Value(usize),
+
     jobs: std.ArrayList(Job),
     job_counter: std.atomic.Value(usize),
     queues: []Queue,
@@ -67,6 +68,7 @@ pub const Enumerator = struct {
             .ctx = ctx,
             .exprs_by_cost = std.ArrayList(std.ArrayList(ast.ExprId)).init(allocator),
             .allocator = allocator,
+            .total_evaluations = std.atomic.Value(usize).init(0),
             .jobs = std.ArrayList(Job).init(allocator),
             .job_counter = std.atomic.Value(usize).init(0),
             .queues = &[_]Queue{},
@@ -95,49 +97,47 @@ pub const Enumerator = struct {
         }
     }
 
-    fn register_expr(self: *Enumerator, cost_list: *std.ArrayList(ast.ExprId), expr: ast.Expr, fp: eval.Fingerprint) !void {
-        const gop = try self.db.fp_to_class.getOrPut(fp);
+    fn register_expr(self: *Enumerator, cost_list: *std.ArrayList(ast.ExprId), expr: ast.Expr, hash: eval.FingerprintHash) !void {
+        const gop = try self.db.fp_to_class.getOrPut(hash);
+        const expr_id = try self.db.expr_arena.add(expr);
         if (!gop.found_existing) {
-            const expr_id = try self.db.expr_arena.add(expr);
             const class_id = @as(eval.ClassId, @intCast(self.db.classes.items.len));
-            
+
             try self.db.classes.append(.{
-                .fingerprint = fp,
+                .hash = hash,
                 .canonical_expr = expr_id,
             });
             try self.db.expr_to_class.append(class_id);
             gop.value_ptr.* = eval.SmallClassList.init(class_id);
             try cost_list.append(expr_id);
+        } else {
+            try self.db.expr_to_class.append(gop.value_ptr.*.inline_val);
         }
     }
 
     pub fn seed_cost_0(self: *Enumerator) !void {
         var cost0 = std.ArrayList(ast.ExprId).init(self.allocator);
-        
+
         for (0..3) |i| {
             const v = @as(ast.Var, @enumFromInt(i));
             const expr = ast.Expr{ .variable = v };
-            const fp = self.db.eval(self.ctx, expr);
+            const fp = eval.ExpressionDatabase.eval_and_hash(self.ctx, expr, &self.db.expr_arena);
             try self.register_expr(&cost0, expr, fp);
         }
-        
-        const constants = [_]u32{
-            0, 1, 2, 3, 4, 8, 16, 31, 32,
-            0xFFFFFFFF, 0x80000000, 0x7FFFFFFF, 0xFFFF
-        };
+
+        const constants = [_]u32{ 0, 1, 2, 3, 4, 8, 16, 31, 32, 0xFFFFFFFF, 0x80000000, 0x7FFFFFFF, 0xFFFF };
         for (constants) |c| {
             const expr = ast.Expr{ .constant = c };
-            const fp = self.db.eval(self.ctx, expr);
+            const fp = eval.ExpressionDatabase.eval_and_hash(self.ctx, expr, &self.db.expr_arena);
             try self.register_expr(&cost0, expr, fp);
         }
-        
+
         try self.exprs_by_cost.append(cost0);
     }
 
-pub fn isCommutative(op: ast.BinOp) bool {
-    return op == .add or op == .mul or op == .and_op or op == .or_op or op == .xor or op == .eq;
-}
-
+    pub fn isCommutative(op: ast.BinOp) bool {
+        return op == .add or op == .mul or op == .and_op or op == .or_op or op == .xor or op == .eq;
+    }
 
     pub fn prepare_jobs_for_cost(self: *Enumerator, k: usize) !void {
         self.jobs.clearRetainingCapacity();
@@ -167,12 +167,12 @@ pub fn isCommutative(op: ast.BinOp) bool {
             }
         }
 
-        if (false and k >= 1) {
+        if (k >= 1) {
             const target = k - 1;
             for (0..target + 1) |c1| {
                 const c2 = target - c1;
                 if (c1 >= self.exprs_by_cost.items.len or c2 >= self.exprs_by_cost.items.len) continue;
-                
+
                 const len = self.exprs_by_cost.items[c1].items.len;
                 var i: usize = 0;
                 while (i < len) : (i += chunk_size) {
@@ -201,7 +201,7 @@ pub fn isCommutative(op: ast.BinOp) bool {
                 for (0..target - c1 + 1) |c2| {
                     const c3 = target - c1 - c2;
                     if (c1 >= self.exprs_by_cost.items.len or c2 >= self.exprs_by_cost.items.len or c3 >= self.exprs_by_cost.items.len) continue;
-                    
+
                     const len = self.exprs_by_cost.items[c1].items.len;
                     var i: usize = 0;
                     while (i < len) : (i += chunk_size) {
@@ -231,7 +231,7 @@ pub fn isCommutative(op: ast.BinOp) bool {
             if (job_idx >= self.jobs.items.len) {
                 break;
             }
-            
+
             const job = self.jobs.items[job_idx];
             switch (job.job_type) {
                 .unop => {
@@ -240,8 +240,8 @@ pub fn isCommutative(op: ast.BinOp) bool {
                     for (job.lhs_start..job.lhs_end) |i| {
                         const e1 = list[i];
                         const expr = ast.Expr{ .unary = .{ .op = op, .expr = e1 } };
-                        const fp = self.db.eval(self.ctx, expr);
-                        while (!queue.push(.{ .expr = expr, .fp = fp })) {
+                        const fp = eval.ExpressionDatabase.eval_and_hash(self.ctx, expr, &self.db.expr_arena);
+                        while (!queue.push(.{ .expr = expr, .hash = fp })) {
                             std.atomic.spinLoopHint();
                         }
                     }
@@ -252,15 +252,15 @@ pub fn isCommutative(op: ast.BinOp) bool {
                     const rhs_list = self.exprs_by_cost.items[job.c2].items;
                     const is_comm = isCommutative(op);
                     const same_cost = job.c1 == job.c2;
-                    
+
                     for (job.lhs_start..job.lhs_end) |i| {
                         const e1 = lhs_list[i];
                         for (rhs_list) |e2| {
                             if (is_comm and same_cost and e1 > e2) continue;
-                            
+
                             const expr = ast.Expr{ .binary = .{ .op = op, .lhs = e1, .rhs = e2 } };
-                            const fp = self.db.eval(self.ctx, expr);
-                            while (!queue.push(.{ .expr = expr, .fp = fp })) {
+                            const fp = eval.ExpressionDatabase.eval_and_hash(self.ctx, expr, &self.db.expr_arena);
+                            while (!queue.push(.{ .expr = expr, .hash = fp })) {
                                 std.atomic.spinLoopHint();
                             }
                         }
@@ -270,14 +270,14 @@ pub fn isCommutative(op: ast.BinOp) bool {
                     const cond_list = self.exprs_by_cost.items[job.c1].items;
                     const t_list = self.exprs_by_cost.items[job.c2].items;
                     const f_list = self.exprs_by_cost.items[job.c3].items;
-                    
+
                     for (job.lhs_start..job.lhs_end) |i| {
                         const cond = cond_list[i];
                         for (t_list) |t| {
                             for (f_list) |f| {
                                 const expr = ast.Expr{ .select = .{ .cond = cond, .true_val = t, .false_val = f } };
-                                const fp = self.db.eval(self.ctx, expr);
-                                while (!queue.push(.{ .expr = expr, .fp = fp })) {
+                                const fp = eval.ExpressionDatabase.eval_and_hash(self.ctx, expr, &self.db.expr_arena);
+                                while (!queue.push(.{ .expr = expr, .hash = fp })) {
                                     std.atomic.spinLoopHint();
                                 }
                             }
@@ -291,15 +291,17 @@ pub fn isCommutative(op: ast.BinOp) bool {
 
     pub fn orchestrate_cost(self: *Enumerator, k: usize, num_threads: usize) !void {
         try self.prepare_jobs_for_cost(k);
+        std.debug.print("Cost {} jobs generated: {}\n", .{ k, self.jobs.items.len });
         var cost_list = std.ArrayList(ast.ExprId).init(self.allocator);
-        
+        self.job_counter.store(0, .release);
+
         var threads = try self.allocator.alloc(std.Thread, num_threads);
         defer self.allocator.free(threads);
-        
+
         for (0..num_threads) |w| {
             threads[w] = try std.Thread.spawn(.{}, worker_loop, .{ self, w });
         }
-        
+
         var active_workers = num_threads;
         var workers_finished = try self.allocator.alloc(bool, num_threads);
         defer self.allocator.free(workers_finished);
@@ -307,18 +309,18 @@ pub fn isCommutative(op: ast.BinOp) bool {
         for (0..num_threads) |w| {
             self.workers_done[w].store(false, .release);
         }
-        
+
         while (active_workers > 0) {
             for (0..num_threads) |w| {
                 if (workers_finished[w]) continue;
-                
+
                 while (self.queues[w].pop()) |res| {
-                    try self.register_expr(&cost_list, res.expr, res.fp);
+                    try self.register_expr(&cost_list, res.expr, res.hash);
                 }
-                
+
                 if (self.workers_done[w].load(.acquire)) {
                     while (self.queues[w].pop()) |res| {
-                        try self.register_expr(&cost_list, res.expr, res.fp);
+                        try self.register_expr(&cost_list, res.expr, res.hash);
                     }
                     workers_finished[w] = true;
                     active_workers -= 1;
@@ -326,12 +328,11 @@ pub fn isCommutative(op: ast.BinOp) bool {
             }
             std.atomic.spinLoopHint();
         }
-        
+
         for (0..num_threads) |w| {
             threads[w].join();
         }
-        
+
         try self.exprs_by_cost.append(cost_list);
     }
-
 };

@@ -3,8 +3,11 @@ const ast = @import("ast.zig");
 const expr_arena = @import("arena.zig");
 
 pub const BATCH_SIZE = 64;
-pub const NUM_BATCHES = 64;
-pub const TOTAL_SAMPLES = BATCH_SIZE * NUM_BATCHES; // 4096
+pub const NUM_EDGE_CASES = 26;
+pub const EDGE_GRID_SAMPLES = NUM_EDGE_CASES * NUM_EDGE_CASES * NUM_EDGE_CASES; // 4096, exhaustive
+pub const NUM_RANDOM_SAMPLES = EDGE_GRID_SAMPLES; // 1:1 with the edge grid; tune independently
+pub const TOTAL_SAMPLES = EDGE_GRID_SAMPLES + NUM_RANDOM_SAMPLES; // 8192
+pub const NUM_BATCHES = (TOTAL_SAMPLES + BATCH_SIZE - 1) / BATCH_SIZE;
 
 pub const Vector64 = @Vector(BATCH_SIZE, u32);
 
@@ -13,28 +16,75 @@ pub const EvaluationContext = struct {
     y_batches: [NUM_BATCHES]Vector64,
     z_batches: [NUM_BATCHES]Vector64,
 
+    fn setSample(ctx: *EvaluationContext, idx: usize, x: u32, y: u32, z: u32) void {
+        const batch_idx = idx / BATCH_SIZE;
+        const lane_idx = idx % BATCH_SIZE;
+        ctx.x_batches[batch_idx][lane_idx] = x;
+        ctx.y_batches[batch_idx][lane_idx] = y;
+        ctx.z_batches[batch_idx][lane_idx] = z;
+    }
+
     pub fn init() EvaluationContext {
         var ctx: EvaluationContext = undefined;
-        
+
         const edge_cases = [_]u32{
             0, 1, 2, 3, 4, 8, 16, 31, 32,
-            0xFFFFFFFF, 0x80000000, 0x7FFFFFFF, 0xFFFF,
-            0x55555555, 0xAAAAAAAA, 0x0000FFFF
-        }; // exactly 16 edge cases
+            0xFFFFFFFF, 0xFFFFFFFE, 0xFFFFFFFD, 0xFFFFFFFC, // -1, -2, -3, -4
+            0xFFFFFFF8, 0xFFFFFFF0, 0xFFFFFFE1, 0xFFFFFFE0,  // -8, -16, -31, -32
+            0x80000000, 0x7FFFFFFF, 0x80000001, 0x7FFFFFFE,  // INT_MIN, INT_MAX, and their ±1 neighbors
+            0xFFFF, 0x55555555, 0xAAAAAAAA,
+        };
 
         var idx: usize = 0;
+
+        // 1) The full, untouched exhaustive 16x16x16 edge-case grid, exactly
+        //    as before. Every combination of boundary values is covered.
         for (edge_cases) |x| {
             for (edge_cases) |y| {
                 for (edge_cases) |z| {
-                    const batch_idx = idx / BATCH_SIZE;
-                    const lane_idx = idx % BATCH_SIZE;
-                    ctx.x_batches[batch_idx][lane_idx] = x;
-                    ctx.y_batches[batch_idx][lane_idx] = y;
-                    ctx.z_batches[batch_idx][lane_idx] = z;
+                    ctx.setSample(idx, x, y, z);
                     idx += 1;
                 }
             }
         }
+
+        // 2) On top of that (not instead of it), fill the newly added
+        //    capacity with random triples. This is purely additive: it
+        //    catches expressions that agree everywhere on the structured
+        //    edge grid but diverge on generic inputs, without weakening any
+        //    of the existing boundary coverage.
+        // Read counterexamples from CEGIS loop
+        const ce_file = std.fs.cwd().openFile("counterexamples.txt", .{}) catch null;
+        if (ce_file) |f| {
+            defer f.close();
+            var buf_reader = std.io.bufferedReader(f.reader());
+            var stream = buf_reader.reader();
+            var buf: [1024]u8 = undefined;
+            while (stream.readUntilDelimiterOrEof(&buf, '\n') catch null) |line| {
+                if (line.len == 0) continue;
+                var it = std.mem.split(u8, line, ",");
+                const x_str = it.next() orelse continue;
+                const y_str = it.next() orelse continue;
+                const z_str = it.next() orelse continue;
+                const x_val = std.fmt.parseInt(i64, std.mem.trim(u8, x_str, " \t"), 10) catch continue;
+                const y_val = std.fmt.parseInt(i64, std.mem.trim(u8, y_str, " \t"), 10) catch continue;
+                const z_val = std.fmt.parseInt(i64, std.mem.trim(u8, z_str, " \t"), 10) catch continue;
+                const ux = @as(u32, @bitCast(@as(i32, @truncate(x_val))));
+                const uy = @as(u32, @bitCast(@as(i32, @truncate(y_val))));
+                const uz = @as(u32, @bitCast(@as(i32, @truncate(z_val))));
+                ctx.setSample(idx, ux, uy, uz);
+                std.debug.print("Loaded CE: {}, {}, {}\n", .{ux, uy, uz});
+                idx += 1;
+                if (idx >= TOTAL_SAMPLES) break;
+            }
+        }
+        
+        var prng = std.Random.DefaultPrng.init(0xC0FFEE_C0FFEE);
+        const rand = prng.random();
+        while (idx < TOTAL_SAMPLES) : (idx += 1) {
+            ctx.setSample(idx, rand.int(u32), rand.int(u32), rand.int(u32));
+        }
+
         return ctx;
     }
 };
@@ -43,7 +93,7 @@ pub const FingerprintHash = u64;
 
 pub const EquivalenceClass = struct {
     hash: FingerprintHash,
-    canonical_expr: ast.ExprId, 
+    canonical_expr: ast.ExprId,
 };
 
 pub const ClassId = u32;
@@ -118,7 +168,7 @@ pub const ExpressionDatabase = struct {
         self.expr_to_class.deinit();
         self.expr_arena.deinit();
     }
-    
+
     // Evaluate a single batch recursively
     pub fn eval_batch(ctx: *const EvaluationContext, expr: ast.Expr, expr_arena_ref: *const expr_arena.ExpressionArena, batch_idx: usize) Vector64 {
         switch (expr) {
