@@ -2,7 +2,7 @@ const std = @import("std");
 
 /// Centralized configuration for the SCONE Enumerator
 /// Pruning Configuration
-pub const use_pruning = false;
+pub const use_pruning = true;
 
 /// Evaluation Mode Configuration
 /// If false, the $O(N^3)$ Cartesian grid of base_edge_cases is disabled,

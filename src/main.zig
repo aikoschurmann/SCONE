@@ -111,25 +111,47 @@ pub fn main() !void {
 fn export_classes(db: *eval.ExpressionDatabase) !void {
     var out_file = try std.fs.cwd().createFile(config.verification_export_file, .{});
     defer out_file.close();
-    var writer = out_file.writer();
+    
+    // Use a buffered writer for MASSIVE IO speedup
+    var buf_writer = std.io.bufferedWriter(out_file.writer());
+    var writer = buf_writer.writer();
+
+    std.debug.print("Grouping expressions for export (O(N) pass)... ", .{});
+    
+    // O(N) Linked-List Grouping to avoid O(N*C) 500-trillion loop
+    const num_exprs = db.expr_arena.len;
+    const num_classes = db.classes.items.len;
+    
+    var head = try std.heap.page_allocator.alloc(u32, num_classes);
+    defer std.heap.page_allocator.free(head);
+    @memset(head, 0xFFFFFFFF);
+    
+    var next = try std.heap.page_allocator.alloc(u32, num_exprs);
+    defer std.heap.page_allocator.free(next);
+    @memset(next, 0xFFFFFFFF);
+    
+    var class_sizes = try std.heap.page_allocator.alloc(u32, num_classes);
+    defer std.heap.page_allocator.free(class_sizes);
+    @memset(class_sizes, 0);
+
+    for (db.expr_to_class.items, 0..) |cid, expr_id| {
+        next[expr_id] = head[cid];
+        head[cid] = @as(u32, @intCast(expr_id));
+        class_sizes[cid] += 1;
+    }
+    
+    std.debug.print("Done. Exporting classes...\n", .{});
 
     var exported: usize = 0;
-    for (db.classes.items, 0..) |_, class_id_usize| {
-        const class_id: u32 = @intCast(class_id_usize);
-        var exprs = std.ArrayList(u32).init(std.heap.page_allocator);
-        defer exprs.deinit();
-
-        for (db.expr_to_class.items, 0..) |cid, expr_id| {
-            if (cid == class_id) {
-                try exprs.append(@intCast(expr_id));
-            }
-        }
-
-        if (exprs.items.len > 1) {
+    for (head, 0..) |h, class_id| {
+        if (class_sizes[class_id] > 1) {
             try writer.print("Class {}:\n", .{class_id});
-            for (exprs.items) |expr_id| {
-                try ast.format_expr(@intCast(expr_id), &db.expr_arena, writer);
+            
+            var curr: u32 = h;
+            while (curr != 0xFFFFFFFF) {
+                try ast.format_expr(curr, &db.expr_arena, writer);
                 try writer.writeAll("\n");
+                curr = next[curr];
             }
             try writer.writeAll("\n");
             exported += 1;
@@ -138,5 +160,7 @@ fn export_classes(db: *eval.ExpressionDatabase) !void {
         // Only export first N interesting classes to avoid massive files
         if (exported >= config.max_classes_to_export) break;
     }
+    
+    try buf_writer.flush();
     std.debug.print("Exported {} classes with collisions to classes.txt for Z3 verification.\n", .{exported});
 }

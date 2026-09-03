@@ -2,6 +2,7 @@ const std = @import("std");
 const ast = @import("ast.zig");
 const eval = @import("eval.zig");
 const config = @import("config.zig");
+const prune = @import("prune.zig");
 
 fn RingBuffer(comptime T: type, comptime capacity: usize) type {
     return struct {
@@ -257,7 +258,11 @@ pub const Enumerator = struct {
                     for (job.lhs_start..job.lhs_end) |i| {
                         const e1 = lhs_list[i];
                         for (rhs_list) |e2| {
-                            if (is_comm and same_cost and e1 > e2) continue;
+                            if (config.use_pruning) {
+                                if (prune.is_pruned_depth1(op, e1, e2, job.c1, job.c2, &self.db.expr_arena)) continue;
+                            } else {
+                                if (is_comm and same_cost and e1 > e2) continue;
+                            }
 
                             const expr = ast.Expr{ .binary = .{ .op = op, .lhs = e1, .rhs = e2 } };
                             const fp = eval.ExpressionDatabase.eval_and_hash(self.ctx, expr, &self.db.expr_arena);
