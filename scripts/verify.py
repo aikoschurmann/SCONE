@@ -1,29 +1,27 @@
 import sys
 import z3
+import multiprocessing
 
-# A simple recursive descent parser for the AST format
 class Parser:
     def __init__(self, s):
         self.tokens = s.replace('(', ' ( ').replace(')', ' ) ').split()
         self.pos = 0
 
     def parse(self):
+        if self.pos >= len(self.tokens): return None
         token = self.tokens[self.pos]
         self.pos += 1
         if token == '(':
-            # binary op is printed as (lhs op rhs)
             lhs = self.parse()
             op = self.tokens[self.pos]
             self.pos += 1
             rhs = self.parse()
-            self.pos += 1 # skip ')'
+            self.pos += 1 
             return (op, lhs, rhs)
-        elif token.startswith('select('):
-            pass
         elif token in ['neg', 'not', 'clz', 'ctz', 'popcount']:
-            self.pos += 1 # skip '('
+            self.pos += 1 
             expr = self.parse()
-            self.pos += 1 # skip ')'
+            self.pos += 1 
             return (token, expr)
         else:
             return token
@@ -52,12 +50,12 @@ def to_z3(ast, x, y, z):
         if ast == 'x': return x
         if ast == 'y': return y
         if ast == 'z': return z
-        if ast == 'INT_MIN': return z3.BitVecVal(-2147483648, 32)
-        if ast == 'INT_MAX': return z3.BitVecVal(2147483647, 32)
         return z3.BitVecVal(int(ast), 32)
 
-def check_class(class_id, exprs, ce_writer):
-    if not exprs: return True
+def check_class_worker(task):
+    class_id, exprs = task
+    if not exprs: return None
+    
     x = z3.BitVec('x', 32)
     y = z3.BitVec('y', 32)
     z = z3.BitVec('z', 32)
@@ -70,28 +68,20 @@ def check_class(class_id, exprs, ce_writer):
         expr_z3 = to_z3(ast, x, y, z)
         
         solver = z3.Solver()
-        # prove they are equal: search for a counterexample where they are NOT equal
         solver.add(base_z3 != expr_z3)
         if solver.check() == z3.sat:
-            print(f"MISTAKE FOUND IN CLASS {class_id}!")
-            print(f"Expr 1: {exprs[0]}")
-            print(f"Expr 2: {expr_str}")
             m = solver.model()
             xv = m[x].as_signed_long() if m[x] is not None else 0
             yv = m[y].as_signed_long() if m[y] is not None else 0
             zv = m[z].as_signed_long() if m[z] is not None else 0
-            print(f"Counterexample: [x = {xv}, y = {yv}, z = {zv}]")
-            
-            # Write to counterexamples.txt
-            ce_writer.write(f"{xv},{yv},{zv}\n")
-            return False
-    return True
+            return (class_id, exprs[0], expr_str, xv, yv, zv)
+    return None
 
 def main():
     classes = []
     current_class = None
     current_exprs = []
-
+    
     try:
         with open('classes.txt') as f:
             for line in f:
@@ -110,13 +100,36 @@ def main():
         print("classes.txt not found yet.")
         sys.exit(1)
 
+    print(f"Loaded {len(classes)} classes. Spawning workers...")
+    
+    # Run Z3 checks in parallel
+    pool = multiprocessing.Pool()
+    results = pool.imap_unordered(check_class_worker, classes, chunksize=50)
+    
     mistakes = 0
+    ces_found = set()
+    
     with open('counterexamples.txt', 'a') as ce_writer:
-        for cid, exprs in classes:
-            if not check_class(cid, exprs, ce_writer):
+        for res in results:
+            if res is not None:
+                cid, e1, e2, xv, yv, zv = res
+                print(f"MISTAKE IN {cid}! {e1} != {e2} (CE: {xv},{yv},{zv})")
+                
+                # Deduplicate counterexamples before writing to file
+                ce_key = (xv, yv, zv)
+                if ce_key not in ces_found:
+                    ces_found.add(ce_key)
+                    ce_writer.write(f"{xv},{yv},{zv}\n")
+                
                 mistakes += 1
+                
+                # Don't overwhelm Scone with too many CEs at once, max 500 per iteration
+                if len(ces_found) >= 500:
+                    print("Reached 500 unique counterexamples. Stopping early to inject.")
+                    pool.terminate()
+                    break
 
-    print(f"Verified {len(classes)} classes. Mistakes found: {mistakes}")
+    print(f"Verification complete. Mistakes found: {mistakes}. Unique CEs appended: {len(ces_found)}")
 
 if __name__ == '__main__':
     main()

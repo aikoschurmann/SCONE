@@ -57,7 +57,7 @@ pub const total_samples = edge_grid_samples + num_random_samples;
 /// CEGIS Configuration
 pub const counterexamples_file = "counterexamples.txt";
 pub const verification_export_file = "classes.txt";
-pub const max_classes_to_export = 100;
+pub const max_classes_to_export = 50_000;
 
 /// AST Generation Configuration
 /// These are the 13 constants that form the base of the search space at Cost 0.
