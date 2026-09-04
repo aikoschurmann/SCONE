@@ -20,7 +20,7 @@ fn mk_clz(ctx: z3.Z3_context, expr: z3.Z3_ast) z3.Z3_ast {
     const sort = z3.Z3_mk_bv_sort(ctx, 32);
     var res = z3.Z3_mk_unsigned_int64(ctx, 32, sort);
     const one_bit = z3.Z3_mk_unsigned_int64(ctx, 1, z3.Z3_mk_bv_sort(ctx, 1));
-    
+
     for (0..32) |i| {
         const bit = z3.Z3_mk_extract(ctx, @intCast(i), @intCast(i), expr);
         const is_one = z3.Z3_mk_eq(ctx, bit, one_bit);
@@ -34,7 +34,7 @@ fn mk_ctz(ctx: z3.Z3_context, expr: z3.Z3_ast) z3.Z3_ast {
     const sort = z3.Z3_mk_bv_sort(ctx, 32);
     var res = z3.Z3_mk_unsigned_int64(ctx, 32, sort);
     const one_bit = z3.Z3_mk_unsigned_int64(ctx, 1, z3.Z3_mk_bv_sort(ctx, 1));
-    
+
     var i: i32 = 31;
     while (i >= 0) : (i -= 1) {
         const bit = z3.Z3_mk_extract(ctx, @intCast(i), @intCast(i), expr);
@@ -51,7 +51,7 @@ fn mk_popcount(ctx: z3.Z3_context, expr: z3.Z3_ast) z3.Z3_ast {
     const one_bit = z3.Z3_mk_unsigned_int64(ctx, 1, z3.Z3_mk_bv_sort(ctx, 1));
     const one_32 = z3.Z3_mk_unsigned_int64(ctx, 1, sort);
     const zero_32 = z3.Z3_mk_unsigned_int64(ctx, 0, sort);
-    
+
     for (0..32) |i| {
         const bit = z3.Z3_mk_extract(ctx, @intCast(i), @intCast(i), expr);
         const is_one = z3.Z3_mk_eq(ctx, bit, one_bit);
@@ -88,7 +88,7 @@ fn hash_expr_recursive(expr_id: ast.ExprId, arena: *const @import("arena.zig").E
             hash_expr_recursive(s.cond, arena, hasher);
             hash_expr_recursive(s.true_val, arena, hasher);
             hash_expr_recursive(s.false_val, arena, hasher);
-        }
+        },
     }
 }
 
@@ -134,7 +134,7 @@ pub fn to_z3(ctx: z3.Z3_context, expr_id: ast.ExprId, arena: *const @import("are
         .binary => |b| {
             const l = to_z3(ctx, b.lhs, arena, x, y, z);
             const r = to_z3(ctx, b.rhs, arena, x, y, z);
-            
+
             const sort = z3.Z3_mk_bv_sort(ctx, 32);
             const mask31 = z3.Z3_mk_unsigned_int64(ctx, 31, sort);
             const r_masked = z3.Z3_mk_bvand(ctx, r, mask31);
@@ -149,7 +149,7 @@ pub fn to_z3(ctx: z3.Z3_context, expr_id: ast.ExprId, arena: *const @import("are
                 .shl => return z3.Z3_mk_bvshl(ctx, l, r_masked),
                 .lshr => return z3.Z3_mk_bvlshr(ctx, l, r_masked),
                 .ashr => return z3.Z3_mk_bvashr(ctx, l, r_masked),
-                
+
                 .ult => {
                     const cmp = z3.Z3_mk_bvult(ctx, l, r);
                     const one = z3.Z3_mk_unsigned_int64(ctx, 1, sort);
@@ -186,12 +186,12 @@ pub fn to_z3(ctx: z3.Z3_context, expr_id: ast.ExprId, arena: *const @import("are
             const c = to_z3(ctx, s.cond, arena, x, y, z);
             const t = to_z3(ctx, s.true_val, arena, x, y, z);
             const f = to_z3(ctx, s.false_val, arena, x, y, z);
-            
+
             const sort = z3.Z3_mk_bv_sort(ctx, 32);
             const zero = z3.Z3_mk_unsigned_int64(ctx, 0, sort);
             const cmp = z3.Z3_mk_eq(ctx, c, zero);
             return z3.Z3_mk_ite(ctx, cmp, f, t);
-        }
+        },
     }
 }
 
@@ -211,14 +211,11 @@ fn check_class_ctx(allocator: std.mem.Allocator, class_id: u32, head: []const u3
         z3.Z3_del_context(ctx);
         z3.Z3_del_config(z3_cfg);
     }
-    
 
-
-    
     const solver = z3.Z3_mk_solver(ctx);
     z3.Z3_solver_inc_ref(ctx, solver);
     defer z3.Z3_solver_dec_ref(ctx, solver);
-    
+
     const params = z3.Z3_mk_params(ctx);
     z3.Z3_params_inc_ref(ctx, params);
     defer z3.Z3_params_dec_ref(ctx, params);
@@ -227,11 +224,11 @@ fn check_class_ctx(allocator: std.mem.Allocator, class_id: u32, head: []const u3
     z3.Z3_solver_set_params(ctx, solver, params);
 
     const sort = z3.Z3_mk_bv_sort(ctx, 32);
-    
+
     const sym_x = z3.Z3_mk_string_symbol(ctx, "x");
     const sym_y = z3.Z3_mk_string_symbol(ctx, "y");
     const sym_z = z3.Z3_mk_string_symbol(ctx, "z");
-    
+
     const x = z3.Z3_mk_const(ctx, sym_x, sort);
     const y = z3.Z3_mk_const(ctx, sym_y, sort);
     const z = z3.Z3_mk_const(ctx, sym_z, sort);
@@ -239,38 +236,37 @@ fn check_class_ctx(allocator: std.mem.Allocator, class_id: u32, head: []const u3
     var curr: u32 = head[class_id];
     const base_expr = curr;
     const base_z3 = to_z3(ctx, base_expr, arena, x, y, z);
-    
+
     curr = next[curr];
-    if (curr == 0xFFFFFFFF) return .unsat; 
-    
+    if (curr == 0xFFFFFFFF) return .unsat;
+
     var conds_list = std.ArrayList(z3.Z3_ast).init(allocator);
     var eval_list_arr = std.ArrayList(u32).init(allocator);
-    
+
     while (curr != 0xFFFFFFFF) {
         const cache_key = get_cache_key(curr, base_expr, arena);
         ce_mutex.lock();
         const is_proven = proven_cache.contains(cache_key);
         ce_mutex.unlock();
-        
+
         if (!is_proven) {
             const expr_z3 = to_z3(ctx, curr, arena, x, y, z);
             const neq = z3.Z3_mk_not(ctx, z3.Z3_mk_eq(ctx, base_z3, expr_z3));
             conds_list.append(neq) catch return .timeout;
             eval_list_arr.append(curr) catch return .timeout;
-            
         }
         curr = next[curr];
     }
-    
+
     if (conds_list.items.len == 0) return .unsat;
-    
+
     if (conds_list.items.len > 1) {
         const batch_or = z3.Z3_mk_or(ctx, @as(u32, @intCast(conds_list.items.len)), conds_list.items.ptr);
         z3.Z3_solver_assert(ctx, solver, batch_or);
     } else {
         z3.Z3_solver_assert(ctx, solver, conds_list.items[0]);
     }
-    
+
     const result = z3.Z3_solver_check(ctx, solver);
     if (result == z3.Z3_L_UNDEF) return .timeout;
     if (result == z3.Z3_L_TRUE) {
@@ -278,11 +274,11 @@ fn check_class_ctx(allocator: std.mem.Allocator, class_id: u32, head: []const u3
         if (model == null) return .timeout;
         z3.Z3_model_inc_ref(ctx, model);
         defer z3.Z3_model_dec_ref(ctx, model);
-        
+
         var x_val: z3.Z3_ast = undefined;
         var y_val: z3.Z3_ast = undefined;
         var z_val: z3.Z3_ast = undefined;
-        
+
         var cx: i32 = 0;
         var cy: i32 = 0;
         var cz: i32 = 0;
@@ -305,10 +301,10 @@ fn check_class_ctx(allocator: std.mem.Allocator, class_id: u32, head: []const u3
                 cz = @as(i32, @bitCast(@as(u32, @truncate(val))));
             }
         }
-        
+
         return .{ .sat = CE{ .x = cx, .y = cy, .z = cz } };
     }
-    
+
     // UNSAT means we PROVED all eval_list expressions are equivalent to base_expr!
     ce_mutex.lock();
     for (0..conds_list.items.len) |i| {
@@ -316,10 +312,9 @@ fn check_class_ctx(allocator: std.mem.Allocator, class_id: u32, head: []const u3
         proven_cache.put(cache_key, {}) catch {};
     }
     ce_mutex.unlock();
-    
+
     return .unsat;
 }
-
 
 pub const CollidingClass = struct {
     id: u32,
@@ -347,15 +342,14 @@ fn verify_worker(
     ce_mutex: *std.Thread.Mutex,
     stop_flag: *std.atomic.Value(bool),
     proven_cache: *std.AutoHashMap(u64, void),
+    timeout_classes: *std.ArrayList(u32),
 ) void {
     var idx = start_idx;
     while (idx < end_idx) : (idx += 1) {
-        
-        
         var arena_alloc = std.heap.ArenaAllocator.init(std.heap.page_allocator);
         defer arena_alloc.deinit();
         const res = check_class_ctx(arena_alloc.allocator(), top_slice[idx].id, head, next, arena, proven_cache, ce_mutex);
-        
+
         switch (res) {
             .sat => |ce| {
                 _ = mistakes_atomic.fetchAdd(1, .monotonic);
@@ -369,24 +363,27 @@ fn verify_worker(
             },
             .timeout => {
                 _ = timeouts_atomic.fetchAdd(1, .monotonic);
+                ce_mutex.lock();
+                timeout_classes.append(top_slice[idx].id) catch {};
+                ce_mutex.unlock();
             },
             .unsat => {},
         }
-        
+
         const curr_prog = progress.fetchAdd(1, .monotonic) + 1;
         if (curr_prog % 100 == 0 or curr_prog == total_classes or stop_flag.load(.acquire)) {
             const now = std.time.milliTimestamp();
             const elapsed_s = @as(f64, @floatFromInt(now - start_time)) / 1000.0;
             const speed = if (elapsed_s > 0) @as(f64, @floatFromInt(curr_prog)) / elapsed_s else 0;
-            
+
             const current_mistakes = mistakes_atomic.load(.acquire);
             const current_timeouts = timeouts_atomic.load(.acquire);
-            
+
             ce_mutex.lock();
             const current_unique = unique_ces.count();
             ce_mutex.unlock();
-            
-            std.debug.print("\rZ3 SAT Proofs: {}/{} classes | {d:.1} classes/s | raw CEs: {} | unique CEs: {} | timeouts: {}...", .{curr_prog, total_classes, speed, current_mistakes, current_unique, current_timeouts});
+
+            std.debug.print("\rZ3 SAT Proofs: {}/{} classes | {d:.1} classes/s | raw CEs: {} | unique CEs: {} | timeouts: {}...", .{ curr_prog, total_classes, speed, current_mistakes, current_unique, current_timeouts });
         }
     }
 }
@@ -394,27 +391,23 @@ fn verify_worker(
 pub const VerifyResult = struct { mistakes: usize, timeouts: usize };
 pub fn verify_classes(db: *database.ExpressionDatabase, iteration: usize, proven_cache: *std.AutoHashMap(u64, void), num_threads: usize) !VerifyResult {
     var timer = try std.time.Timer.start();
-    
-    
-    
+
     // Use a buffered writer for MASSIVE IO speedup
-    
-    
 
     std.debug.print("Exporting collisions to Z3...\n", .{});
-    
+
     // O(N) Linked-List Grouping to avoid O(N*C) 500-trillion loop
     const num_exprs = db.expr_arena.len;
     const num_classes = db.classes.items.len;
-    
+
     var head = try std.heap.page_allocator.alloc(u32, num_classes);
     defer std.heap.page_allocator.free(head);
     @memset(head, 0xFFFFFFFF);
-    
+
     var next = try std.heap.page_allocator.alloc(u32, num_exprs);
     defer std.heap.page_allocator.free(next);
     @memset(next, 0xFFFFFFFF);
-    
+
     var class_sizes = try std.heap.page_allocator.alloc(u32, num_classes);
     defer std.heap.page_allocator.free(class_sizes);
     @memset(class_sizes, 0);
@@ -424,33 +417,27 @@ pub fn verify_classes(db: *database.ExpressionDatabase, iteration: usize, proven
         head[cid] = @as(u32, @intCast(expr_id));
         class_sizes[cid] += 1;
     }
-    
-    
 
-
-    
     var colliding_list = std.ArrayList(CollidingClass).init(std.heap.page_allocator);
     defer colliding_list.deinit();
-    
+
     for (class_sizes, 0..) |sz, cid| {
         if (sz > 1) {
             try colliding_list.append(.{ .id = @as(u32, @intCast(cid)), .size = sz });
         }
     }
-    
+
     // Sort descending by size
     std.sort.block(CollidingClass, colliding_list.items, {}, CollidingClass.lessThan);
-    
+
     // Take the top 500k fattest classes (or less if not enough)
     const top_n = @min(colliding_list.items.len, config.active.max_classes_to_verify);
     const top_slice = colliding_list.items[0..top_n];
-    
+
     // Randomly shuffle the top slice to ensure Z3 diversity and prevent timeout deadlocks
     var prng = std.Random.DefaultPrng.init(@as(u64, @intCast(std.time.milliTimestamp())));
     const random = prng.random();
     random.shuffle(CollidingClass, top_slice);
-
-    
 
     const ce_file = std.fs.cwd().openFile(config.active.counterexamples_file, .{ .mode = .read_write }) catch |err| switch (err) {
         error.FileNotFound => try std.fs.cwd().createFile(config.active.counterexamples_file, .{}),
@@ -463,56 +450,68 @@ pub fn verify_classes(db: *database.ExpressionDatabase, iteration: usize, proven
     var pool: std.Thread.Pool = undefined;
     try pool.init(.{ .allocator = std.heap.page_allocator });
     defer pool.deinit();
-    
+
     var wg = std.Thread.WaitGroup{};
-    
-    
+
     std.debug.print("Z3 SAT Solver: Spawning {} parallel threads across CPU cores...\n", .{num_threads});
-    
+
     const chunk_size = (top_slice.len + num_threads - 1) / num_threads;
-    
+
     var progress = std.atomic.Value(usize).init(0);
     var mistakes_atomic = std.atomic.Value(usize).init(0);
     var timeouts_atomic = std.atomic.Value(usize).init(0);
     const start_time = std.time.milliTimestamp();
-    
+
     var unique_ces = std.AutoHashMap(CE, void).init(std.heap.page_allocator);
     defer unique_ces.deinit();
+
+    var timeout_classes = std.ArrayList(u32).init(std.heap.page_allocator);
+    defer timeout_classes.deinit();
     var ce_mutex = std.Thread.Mutex{};
     var stop_flag = std.atomic.Value(bool).init(false);
-    
+
     var t: usize = 0;
     while (t < num_threads) : (t += 1) {
         const start_idx = t * chunk_size;
         const end_idx = @min(start_idx + chunk_size, top_slice.len);
         if (start_idx >= end_idx) continue;
-        
-        pool.spawnWg(&wg, verify_worker, .{ start_idx, end_idx, top_slice, head, next, &db.expr_arena, &progress, &mistakes_atomic, &timeouts_atomic, top_slice.len, start_time, &unique_ces, &ce_mutex, &stop_flag, proven_cache });
+
+        pool.spawnWg(&wg, verify_worker, .{ start_idx, end_idx, top_slice, head, next, &db.expr_arena, &progress, &mistakes_atomic, &timeouts_atomic, top_slice.len, start_time, &unique_ces, &ce_mutex, &stop_flag, proven_cache, &timeout_classes });
     }
     wg.wait();
-    
+
     const timeouts = timeouts_atomic.load(.acquire);
     const mistakes = mistakes_atomic.load(.acquire);
-    
+
     var unique_count: usize = 0;
     var ce_it = unique_ces.keyIterator();
     while (ce_it.next()) |ce| {
-        try ce_writer.print("{},{},{}\n", .{ce.x, ce.y, ce.z});
+        try ce_writer.print("{},{},{}\n", .{ ce.x, ce.y, ce.z });
         unique_count += 1;
         if (unique_count >= config.active.max_counterexamples_per_iter) break;
     }
-    
+
     if (stop_flag.load(.acquire)) {
         std.debug.print("\n[Early Stop] Counterexample cap ({}) reached! Verification aborted early.\n", .{config.active.max_counterexamples_per_iter});
     }
-    
+
     const elapsed_s = @as(f64, @floatFromInt(timer.read())) / std.time.ns_per_s;
-    std.debug.print("\nZ3 Verification complete in {d:.2}s. Raw CEs: {}, Unique CEs added: {}\n", .{elapsed_s, mistakes, unique_count});
-    
+    std.debug.print("\nZ3 Verification complete in {d:.2}s. Raw CEs: {}, Unique CEs added: {}\n", .{ elapsed_s, mistakes, unique_count });
+
     // Log telemetry JSON
     var tel = try telemetry.Telemetry.init(config.active.telemetry_file);
     try tel.logVerify(elapsed_s, iteration, top_slice.len, mistakes, timeouts);
     tel.deinit();
-    
+
+    if (timeout_classes.items.len > 0) {
+        const tf = std.fs.cwd().createFile("out/timeouts.txt", .{}) catch null;
+        if (tf) |file| {
+            defer file.close();
+            for (timeout_classes.items) |cid| {
+                file.writer().print("Class {d} timed out\n", .{cid}) catch {};
+            }
+        }
+    }
+
     return .{ .mistakes = mistakes, .timeouts = timeouts };
 }
