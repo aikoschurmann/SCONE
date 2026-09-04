@@ -201,9 +201,11 @@ pub const Z3Result = union(enum) {
     timeout: void,
 };
 
-fn check_class_ctx(class_id: u32, head: []const u32, next: []const u32, arena: *const @import("arena.zig").ExpressionArena, proven_cache: *std.AutoHashMap(u64, void), ce_mutex: *std.Thread.Mutex) Z3Result {
+fn check_class_ctx(allocator: std.mem.Allocator, class_id: u32, head: []const u32, next: []const u32, arena: *const @import("arena.zig").ExpressionArena, proven_cache: *std.AutoHashMap(u64, void), ce_mutex: *std.Thread.Mutex) Z3Result {
     const z3_cfg = z3.Z3_mk_config();
-    z3.Z3_set_param_value(z3_cfg, "timeout", "1000"); // hardcoded for safety in worker
+    var timeout_buf: [32]u8 = undefined;
+    const timeout_str = std.fmt.bufPrintZ(&timeout_buf, "{d}", .{config.active.z3_timeout_ms}) catch "1000";
+    z3.Z3_set_param_value(z3_cfg, "timeout", timeout_str.ptr);
     const ctx = z3.Z3_mk_context(z3_cfg);
     defer {
         z3.Z3_del_context(ctx);
@@ -221,7 +223,7 @@ fn check_class_ctx(class_id: u32, head: []const u32, next: []const u32, arena: *
     z3.Z3_params_inc_ref(ctx, params);
     defer z3.Z3_params_dec_ref(ctx, params);
     const sym_timeout = z3.Z3_mk_string_symbol(ctx, "timeout");
-    z3.Z3_params_set_uint(ctx, params, sym_timeout, 1000);
+    z3.Z3_params_set_uint(ctx, params, sym_timeout, config.active.z3_timeout_ms);
     z3.Z3_solver_set_params(ctx, solver, params);
 
     const sort = z3.Z3_mk_bv_sort(ctx, 32);
@@ -241,11 +243,10 @@ fn check_class_ctx(class_id: u32, head: []const u32, next: []const u32, arena: *
     curr = next[curr];
     if (curr == 0xFFFFFFFF) return .unsat; 
     
-    var num_conds: u32 = 0;
-    var conds: [1000]z3.Z3_ast = undefined; 
-    var eval_list: [1000]u32 = undefined;
+    var conds_list = std.ArrayList(z3.Z3_ast).init(allocator);
+    var eval_list_arr = std.ArrayList(u32).init(allocator);
     
-    while (curr != 0xFFFFFFFF and num_conds < 1000) {
+    while (curr != 0xFFFFFFFF) {
         const cache_key = get_cache_key(curr, base_expr, arena);
         ce_mutex.lock();
         const is_proven = proven_cache.contains(cache_key);
@@ -254,20 +255,20 @@ fn check_class_ctx(class_id: u32, head: []const u32, next: []const u32, arena: *
         if (!is_proven) {
             const expr_z3 = to_z3(ctx, curr, arena, x, y, z);
             const neq = z3.Z3_mk_not(ctx, z3.Z3_mk_eq(ctx, base_z3, expr_z3));
-            conds[num_conds] = neq;
-            eval_list[num_conds] = curr;
-            num_conds += 1;
+            conds_list.append(neq) catch return .timeout;
+            eval_list_arr.append(curr) catch return .timeout;
+            
         }
         curr = next[curr];
     }
     
-    if (num_conds == 0) return .unsat;
+    if (conds_list.items.len == 0) return .unsat;
     
-    if (num_conds > 1) {
-        const batch_or = z3.Z3_mk_or(ctx, num_conds, &conds);
+    if (conds_list.items.len > 1) {
+        const batch_or = z3.Z3_mk_or(ctx, @as(u32, @intCast(conds_list.items.len)), conds_list.items.ptr);
         z3.Z3_solver_assert(ctx, solver, batch_or);
     } else {
-        z3.Z3_solver_assert(ctx, solver, conds[0]);
+        z3.Z3_solver_assert(ctx, solver, conds_list.items[0]);
     }
     
     const result = z3.Z3_solver_check(ctx, solver);
@@ -310,8 +311,8 @@ fn check_class_ctx(class_id: u32, head: []const u32, next: []const u32, arena: *
     
     // UNSAT means we PROVED all eval_list expressions are equivalent to base_expr!
     ce_mutex.lock();
-    for (0..num_conds) |i| {
-        const cache_key = get_cache_key(eval_list[i], base_expr, arena);
+    for (0..conds_list.items.len) |i| {
+        const cache_key = get_cache_key(eval_list_arr.items[i], base_expr, arena);
         proven_cache.put(cache_key, {}) catch {};
     }
     ce_mutex.unlock();
@@ -349,9 +350,11 @@ fn verify_worker(
 ) void {
     var idx = start_idx;
     while (idx < end_idx) : (idx += 1) {
-        if (stop_flag.load(.acquire)) break;
         
-        const res = check_class_ctx(top_slice[idx].id, head, next, arena, proven_cache, ce_mutex);
+        
+        var arena_alloc = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+        defer arena_alloc.deinit();
+        const res = check_class_ctx(arena_alloc.allocator(), top_slice[idx].id, head, next, arena, proven_cache, ce_mutex);
         
         switch (res) {
             .sat => |ce| {
@@ -388,7 +391,8 @@ fn verify_worker(
     }
 }
 
-pub fn verify_classes(db: *database.ExpressionDatabase, iteration: usize, proven_cache: *std.AutoHashMap(u64, void)) !usize {
+pub const VerifyResult = struct { mistakes: usize, timeouts: usize };
+pub fn verify_classes(db: *database.ExpressionDatabase, iteration: usize, proven_cache: *std.AutoHashMap(u64, void), num_threads: usize) !VerifyResult {
     var timer = try std.time.Timer.start();
     
     
@@ -462,7 +466,7 @@ pub fn verify_classes(db: *database.ExpressionDatabase, iteration: usize, proven
     
     var wg = std.Thread.WaitGroup{};
     
-    const num_threads = std.Thread.getCpuCount() catch 4;
+    
     std.debug.print("Z3 SAT Solver: Spawning {} parallel threads across CPU cores...\n", .{num_threads});
     
     const chunk_size = (top_slice.len + num_threads - 1) / num_threads;
@@ -510,5 +514,5 @@ pub fn verify_classes(db: *database.ExpressionDatabase, iteration: usize, proven
     try tel.logVerify(elapsed_s, iteration, top_slice.len, mistakes, timeouts);
     tel.deinit();
     
-    return mistakes;
+    return .{ .mistakes = mistakes, .timeouts = timeouts };
 }

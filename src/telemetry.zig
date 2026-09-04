@@ -4,7 +4,11 @@ pub const Telemetry = struct {
     file: std.fs.File,
 
     pub fn init(filepath: []const u8) !Telemetry {
-        const file = try std.fs.cwd().createFile(filepath, .{});
+        const file = std.fs.cwd().openFile(filepath, .{ .mode = .read_write }) catch |err| switch (err) {
+            error.FileNotFound => try std.fs.cwd().createFile(filepath, .{}),
+            else => return err,
+        };
+        try file.seekFromEnd(0);
         return .{ .file = file };
     }
 

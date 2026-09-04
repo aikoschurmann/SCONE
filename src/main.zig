@@ -13,7 +13,8 @@ const enumerate = @import("enumerate.zig");
 
 fn sigintHandler(sig: c_int) callconv(.C) void {
     _ = sig;
-    std.debug.print("\nCaught SIGINT (Ctrl+C). Terminating forcefully...\n", .{});
+    const msg = "\nCaught SIGINT (Ctrl+C). Terminating forcefully...\n";
+    _ = std.posix.write(2, msg) catch {};
     std.posix.exit(1);
 }
 
@@ -98,10 +99,13 @@ pub fn main() !void {
         if (!verify_mode) break;
 
 
-        const mistakes = try verify.verify_classes(&db, iteration, &proven_cache);
-        if (mistakes == 0) {
+        const res = try verify.verify_classes(&db, iteration, &proven_cache, num_threads);
+        if (res.mistakes == 0 and res.timeouts == 0) {
             std.debug.print("\n[SUCCESS] PERFECT CLASSES ACHIEVED!\n", .{});
             break;
+        } else if (res.mistakes == 0 and res.timeouts > 0) {
+            std.debug.print("\n[WARNING] 0 mistakes, but {d} timeouts remaining. Engine must retry with longer timeout or skip.\n", .{res.timeouts});
+            break; // Temporary: just break so we don't infinite loop if it's stuck on timeouts
         }
         iteration += 1;
     }
