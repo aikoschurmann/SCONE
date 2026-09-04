@@ -14,6 +14,97 @@ pub const CE = struct {
     z: i32,
 };
 
+fn mk_clz(ctx: z3.Z3_context, expr: z3.Z3_ast) z3.Z3_ast {
+    const sort = z3.Z3_mk_bv_sort(ctx, 32);
+    var res = z3.Z3_mk_unsigned_int64(ctx, 32, sort);
+    const one_bit = z3.Z3_mk_unsigned_int64(ctx, 1, z3.Z3_mk_bv_sort(ctx, 1));
+    
+    for (0..32) |i| {
+        const bit = z3.Z3_mk_extract(ctx, @intCast(i), @intCast(i), expr);
+        const is_one = z3.Z3_mk_eq(ctx, bit, one_bit);
+        const val = z3.Z3_mk_unsigned_int64(ctx, 31 - i, sort);
+        res = z3.Z3_mk_ite(ctx, is_one, val, res);
+    }
+    return res;
+}
+
+fn mk_ctz(ctx: z3.Z3_context, expr: z3.Z3_ast) z3.Z3_ast {
+    const sort = z3.Z3_mk_bv_sort(ctx, 32);
+    var res = z3.Z3_mk_unsigned_int64(ctx, 32, sort);
+    const one_bit = z3.Z3_mk_unsigned_int64(ctx, 1, z3.Z3_mk_bv_sort(ctx, 1));
+    
+    var i: i32 = 31;
+    while (i >= 0) : (i -= 1) {
+        const bit = z3.Z3_mk_extract(ctx, @intCast(i), @intCast(i), expr);
+        const is_one = z3.Z3_mk_eq(ctx, bit, one_bit);
+        const val = z3.Z3_mk_unsigned_int64(ctx, @intCast(i), sort);
+        res = z3.Z3_mk_ite(ctx, is_one, val, res);
+    }
+    return res;
+}
+
+fn mk_popcount(ctx: z3.Z3_context, expr: z3.Z3_ast) z3.Z3_ast {
+    const sort = z3.Z3_mk_bv_sort(ctx, 32);
+    var sum = z3.Z3_mk_unsigned_int64(ctx, 0, sort);
+    const one_bit = z3.Z3_mk_unsigned_int64(ctx, 1, z3.Z3_mk_bv_sort(ctx, 1));
+    const one_32 = z3.Z3_mk_unsigned_int64(ctx, 1, sort);
+    const zero_32 = z3.Z3_mk_unsigned_int64(ctx, 0, sort);
+    
+    for (0..32) |i| {
+        const bit = z3.Z3_mk_extract(ctx, @intCast(i), @intCast(i), expr);
+        const is_one = z3.Z3_mk_eq(ctx, bit, one_bit);
+        const val = z3.Z3_mk_ite(ctx, is_one, one_32, zero_32);
+        sum = z3.Z3_mk_bvadd(ctx, sum, val);
+    }
+    return sum;
+}
+
+fn hash_expr_recursive(expr_id: ast.ExprId, arena: *const @import("arena.zig").ExpressionArena, hasher: *std.hash.Wyhash) void {
+    const expr = arena.get(expr_id);
+    const tag = @intFromEnum(expr);
+    hasher.update(std.mem.asBytes(&tag));
+    switch (expr) {
+        .variable => |v| {
+            const v_tag = @intFromEnum(v);
+            hasher.update(std.mem.asBytes(&v_tag));
+        },
+        .constant => |c| {
+            hasher.update(std.mem.asBytes(&c));
+        },
+        .unary => |u| {
+            const op_tag = @intFromEnum(u.op);
+            hasher.update(std.mem.asBytes(&op_tag));
+            hash_expr_recursive(u.expr, arena, hasher);
+        },
+        .binary => |b| {
+            const op_tag = @intFromEnum(b.op);
+            hasher.update(std.mem.asBytes(&op_tag));
+            hash_expr_recursive(b.lhs, arena, hasher);
+            hash_expr_recursive(b.rhs, arena, hasher);
+        },
+        .select => |s| {
+            hash_expr_recursive(s.cond, arena, hasher);
+            hash_expr_recursive(s.true_val, arena, hasher);
+            hash_expr_recursive(s.false_val, arena, hasher);
+        }
+    }
+}
+
+fn struct_hash(expr_id: ast.ExprId, arena: *const @import("arena.zig").ExpressionArena) u64 {
+    var hasher = std.hash.Wyhash.init(0);
+    hash_expr_recursive(expr_id, arena, &hasher);
+    return hasher.final();
+}
+
+fn get_cache_key(a: ast.ExprId, b: ast.ExprId, arena: *const @import("arena.zig").ExpressionArena) u64 {
+    const ha = struct_hash(a, arena);
+    const hb = struct_hash(b, arena);
+    var h = std.hash.Wyhash.init(0);
+    h.update(std.mem.asBytes(&ha));
+    h.update(std.mem.asBytes(&hb));
+    return h.final();
+}
+
 pub fn to_z3(ctx: z3.Z3_context, expr_id: ast.ExprId, arena: *const @import("arena.zig").ExpressionArena, x: z3.Z3_ast, y: z3.Z3_ast, z: z3.Z3_ast) z3.Z3_ast {
     const expr = arena.get(expr_id);
     switch (expr) {
@@ -33,7 +124,9 @@ pub fn to_z3(ctx: z3.Z3_context, expr_id: ast.ExprId, arena: *const @import("are
             switch (u.op) {
                 .neg => return z3.Z3_mk_bvneg(ctx, child),
                 .not => return z3.Z3_mk_bvnot(ctx, child),
-                .clz, .ctz, .popcount => unreachable, 
+                .clz => return mk_clz(ctx, child),
+                .ctz => return mk_ctz(ctx, child),
+                .popcount => return mk_popcount(ctx, child),
             }
         },
         .binary => |b| {
@@ -100,7 +193,20 @@ pub fn to_z3(ctx: z3.Z3_context, expr_id: ast.ExprId, arena: *const @import("are
     }
 }
 
-pub fn check_class_ctx(ctx: z3.Z3_context, class_id: u32, head: []const u32, next: []const u32, arena: *const @import("arena.zig").ExpressionArena) ?CE {
+pub const Z3Result = union(enum) {
+    sat: CE,
+    unsat: void,
+    timeout: void,
+};
+
+fn check_class_ctx(class_id: u32, head: []const u32, next: []const u32, arena: *const @import("arena.zig").ExpressionArena, proven_cache: *std.AutoHashMap(u64, void), ce_mutex: *std.Thread.Mutex) Z3Result {
+    const z3_cfg = z3.Z3_mk_config();
+    z3.Z3_set_param_value(z3_cfg, "timeout", "1000"); // hardcoded for safety in worker
+    const ctx = z3.Z3_mk_context(z3_cfg);
+    defer {
+        z3.Z3_del_context(ctx);
+        z3.Z3_del_config(z3_cfg);
+    }
     
 
 
@@ -131,18 +237,29 @@ pub fn check_class_ctx(ctx: z3.Z3_context, class_id: u32, head: []const u32, nex
     const base_z3 = to_z3(ctx, base_expr, arena, x, y, z);
     
     curr = next[curr];
-    if (curr == 0xFFFFFFFF) return null; 
+    if (curr == 0xFFFFFFFF) return .unsat; 
     
     var num_conds: u32 = 0;
     var conds: [1000]z3.Z3_ast = undefined; 
+    var eval_list: [1000]u32 = undefined;
     
     while (curr != 0xFFFFFFFF and num_conds < 1000) {
-        const expr_z3 = to_z3(ctx, curr, arena, x, y, z);
-        const neq = z3.Z3_mk_not(ctx, z3.Z3_mk_eq(ctx, base_z3, expr_z3));
-        conds[num_conds] = neq;
-        num_conds += 1;
+        const cache_key = get_cache_key(curr, base_expr, arena);
+        ce_mutex.lock();
+        const is_proven = proven_cache.contains(cache_key);
+        ce_mutex.unlock();
+        
+        if (!is_proven) {
+            const expr_z3 = to_z3(ctx, curr, arena, x, y, z);
+            const neq = z3.Z3_mk_not(ctx, z3.Z3_mk_eq(ctx, base_z3, expr_z3));
+            conds[num_conds] = neq;
+            eval_list[num_conds] = curr;
+            num_conds += 1;
+        }
         curr = next[curr];
     }
+    
+    if (num_conds == 0) return .unsat;
     
     if (num_conds > 1) {
         const batch_or = z3.Z3_mk_or(ctx, num_conds, &conds);
@@ -152,9 +269,10 @@ pub fn check_class_ctx(ctx: z3.Z3_context, class_id: u32, head: []const u32, nex
     }
     
     const result = z3.Z3_solver_check(ctx, solver);
+    if (result == z3.Z3_L_UNDEF) return .timeout;
     if (result == z3.Z3_L_TRUE) {
         const model = z3.Z3_solver_get_model(ctx, solver);
-        if (model == null) return null;
+        if (model == null) return .timeout;
         z3.Z3_model_inc_ref(ctx, model);
         defer z3.Z3_model_dec_ref(ctx, model);
         
@@ -185,10 +303,18 @@ pub fn check_class_ctx(ctx: z3.Z3_context, class_id: u32, head: []const u32, nex
             }
         }
         
-        return CE{ .x = cx, .y = cy, .z = cz };
+        return .{ .sat = CE{ .x = cx, .y = cy, .z = cz } };
     }
     
-    return null;
+    // UNSAT means we PROVED all eval_list expressions are equivalent to base_expr!
+    ce_mutex.lock();
+    for (0..num_conds) |i| {
+        const cache_key = get_cache_key(eval_list[i], base_expr, arena);
+        proven_cache.put(cache_key, {}) catch {};
+    }
+    ce_mutex.unlock();
+    
+    return .unsat;
 }
 
 
@@ -203,7 +329,6 @@ pub const CollidingClass = struct {
 };
 
 fn verify_worker(
-    results: []?CE,
     start_idx: usize,
     end_idx: usize,
     top_slice: []const CollidingClass,
@@ -211,28 +336,57 @@ fn verify_worker(
     next: []const u32,
     arena: *const @import("arena.zig").ExpressionArena,
     progress: *std.atomic.Value(usize),
+    mistakes_atomic: *std.atomic.Value(usize),
+    timeouts_atomic: *std.atomic.Value(usize),
     total_classes: usize,
+    start_time: i64,
+    unique_ces: *std.AutoHashMap(CE, void),
+    ce_mutex: *std.Thread.Mutex,
+    stop_flag: *std.atomic.Value(bool),
+    proven_cache: *std.AutoHashMap(u64, void),
 ) void {
-    const z3_cfg = z3.Z3_mk_config();
-    z3.Z3_set_param_value(z3_cfg, "timeout", std.fmt.allocPrintZ(std.heap.page_allocator, "{d}", .{config.z3_timeout_ms}) catch "1000"); 
-    const ctx = z3.Z3_mk_context(z3_cfg);
-    defer {
-        z3.Z3_del_context(ctx);
-        z3.Z3_del_config(z3_cfg);
-    }
-    
     var idx = start_idx;
     while (idx < end_idx) : (idx += 1) {
-        results[idx] = check_class_ctx(ctx, top_slice[idx].id, head, next, arena);
+        if (stop_flag.load(.acquire)) break;
+        
+        const res = check_class_ctx(top_slice[idx].id, head, next, arena, proven_cache, ce_mutex);
+        
+        switch (res) {
+            .sat => |ce| {
+                _ = mistakes_atomic.fetchAdd(1, .monotonic);
+                ce_mutex.lock();
+                unique_ces.put(ce, {}) catch {};
+                const ucount = unique_ces.count();
+                ce_mutex.unlock();
+                if (ucount >= config.max_counterexamples_per_iter) {
+                    stop_flag.store(true, .release);
+                }
+            },
+            .timeout => {
+                _ = timeouts_atomic.fetchAdd(1, .monotonic);
+            },
+            .unsat => {},
+        }
         
         const curr_prog = progress.fetchAdd(1, .monotonic) + 1;
-        if (curr_prog % 100 == 0 or curr_prog == total_classes) {
-            std.debug.print("\rZ3 SAT Proofs: {}/{} classes verified...", .{curr_prog, total_classes});
+        if (curr_prog % 100 == 0 or curr_prog == total_classes or stop_flag.load(.acquire)) {
+            const now = std.time.milliTimestamp();
+            const elapsed_s = @as(f64, @floatFromInt(now - start_time)) / 1000.0;
+            const speed = if (elapsed_s > 0) @as(f64, @floatFromInt(curr_prog)) / elapsed_s else 0;
+            
+            const current_mistakes = mistakes_atomic.load(.acquire);
+            const current_timeouts = timeouts_atomic.load(.acquire);
+            
+            ce_mutex.lock();
+            const current_unique = unique_ces.count();
+            ce_mutex.unlock();
+            
+            std.debug.print("\rZ3 SAT Proofs: {}/{} classes | {d:.1} classes/s | raw CEs: {} | unique CEs: {} | timeouts: {}...", .{curr_prog, total_classes, speed, current_mistakes, current_unique, current_timeouts});
         }
     }
 }
 
-pub fn verify_classes(db: *eval_mod.ExpressionDatabase, iteration: usize) !usize {
+pub fn verify_classes(db: *eval_mod.ExpressionDatabase, iteration: usize, proven_cache: *std.AutoHashMap(u64, void)) !usize {
     var timer = try std.time.Timer.start();
     
     
@@ -286,7 +440,7 @@ pub fn verify_classes(db: *eval_mod.ExpressionDatabase, iteration: usize) !usize
     const top_slice = colliding_list.items[0..top_n];
     
     // Randomly shuffle the top slice to ensure Z3 diversity and prevent timeout deadlocks
-    var prng = std.rand.DefaultPrng.init(@as(u64, @intCast(std.time.milliTimestamp())));
+    var prng = std.Random.DefaultPrng.init(@as(u64, @intCast(std.time.milliTimestamp())));
     const random = prng.random();
     random.shuffle(CollidingClass, top_slice);
 
@@ -300,9 +454,6 @@ pub fn verify_classes(db: *eval_mod.ExpressionDatabase, iteration: usize) !usize
     try ce_file.seekFromEnd(0);
     const ce_writer = ce_file.writer();
 
-    const results = try std.heap.page_allocator.alloc(?CE, top_slice.len);
-    defer std.heap.page_allocator.free(results);
-    
     var pool: std.Thread.Pool = undefined;
     try pool.init(.{ .allocator = std.heap.page_allocator });
     defer pool.deinit();
@@ -315,6 +466,14 @@ pub fn verify_classes(db: *eval_mod.ExpressionDatabase, iteration: usize) !usize
     const chunk_size = (top_slice.len + num_threads - 1) / num_threads;
     
     var progress = std.atomic.Value(usize).init(0);
+    var mistakes_atomic = std.atomic.Value(usize).init(0);
+    var timeouts_atomic = std.atomic.Value(usize).init(0);
+    const start_time = std.time.milliTimestamp();
+    
+    var unique_ces = std.AutoHashMap(CE, void).init(std.heap.page_allocator);
+    defer unique_ces.deinit();
+    var ce_mutex = std.Thread.Mutex{};
+    var stop_flag = std.atomic.Value(bool).init(false);
     
     var t: usize = 0;
     while (t < num_threads) : (t += 1) {
@@ -322,23 +481,27 @@ pub fn verify_classes(db: *eval_mod.ExpressionDatabase, iteration: usize) !usize
         const end_idx = @min(start_idx + chunk_size, top_slice.len);
         if (start_idx >= end_idx) continue;
         
-        pool.spawnWg(&wg, verify_worker, .{ results, start_idx, end_idx, top_slice, head, next, &db.expr_arena, &progress, top_slice.len });
+        pool.spawnWg(&wg, verify_worker, .{ start_idx, end_idx, top_slice, head, next, &db.expr_arena, &progress, &mistakes_atomic, &timeouts_atomic, top_slice.len, start_time, &unique_ces, &ce_mutex, &stop_flag, proven_cache });
     }
     wg.wait();
     
-    var mistakes: usize = 0;
-    const timeouts: usize = 0;
+    const timeouts = timeouts_atomic.load(.acquire);
+    const mistakes = mistakes_atomic.load(.acquire);
     
-    for (results) |res| {
-        if (res) |ce| {
-            try ce_writer.print("{},{},{}\n", .{ce.x, ce.y, ce.z});
-            mistakes += 1;
-            if (mistakes >= 500) break;
-        }
+    var unique_count: usize = 0;
+    var ce_it = unique_ces.keyIterator();
+    while (ce_it.next()) |ce| {
+        try ce_writer.print("{},{},{}\n", .{ce.x, ce.y, ce.z});
+        unique_count += 1;
+        if (unique_count >= config.max_counterexamples_per_iter) break;
+    }
+    
+    if (stop_flag.load(.acquire)) {
+        std.debug.print("\n[Early Stop] Counterexample cap ({}) reached! Verification aborted early.\n", .{config.max_counterexamples_per_iter});
     }
     
     const elapsed_s = @as(f64, @floatFromInt(timer.read())) / std.time.ns_per_s;
-    std.debug.print("\nZ3 Verification complete in {d:.2}s. Mistakes found: {}\n", .{elapsed_s, mistakes});
+    std.debug.print("\nZ3 Verification complete in {d:.2}s. Raw CEs: {}, Unique CEs added: {}\n", .{elapsed_s, mistakes, unique_count});
     
     // Log telemetry JSON
     const tel_file = try std.fs.cwd().openFile(config.telemetry_file, .{ .mode = .read_write });

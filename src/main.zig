@@ -7,7 +7,21 @@ const verify = @import("verify.zig");
 const enumerate = @import("enumerate.zig");
 const config = @import("config.zig");
 
+
+fn sigintHandler(sig: c_int) callconv(.C) void {
+    _ = sig;
+    std.debug.print("\nCaught SIGINT (Ctrl+C). Terminating forcefully...\n", .{});
+    std.posix.exit(1);
+}
+
 pub fn main() !void {
+    var act = std.posix.Sigaction{
+        .handler = .{ .handler = sigintHandler },
+        .mask = std.posix.empty_sigset,
+        .flags = 0,
+    };
+    try std.posix.sigaction(std.posix.SIG.INT, &act, null);
+
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
@@ -30,6 +44,8 @@ pub fn main() !void {
 
     const num_threads = std.Thread.getCpuCount() catch 4;
     
+    var proven_cache = std.AutoHashMap(u64, void).init(allocator);
+    defer proven_cache.deinit();
     var iteration: usize = 1;
     while (true) {
         if (verify_mode) {
@@ -42,7 +58,7 @@ pub fn main() !void {
         var eval_ctx = try eval.EvaluationContext.init(allocator);
         defer eval_ctx.deinit();
 
-        var db = try eval.ExpressionDatabase.init(allocator);
+        var db = try eval.ExpressionDatabase.init(allocator, eval_ctx.num_batches);
         defer db.deinit();
 
         var enumerator = try enumerate.Enumerator.init(allocator, &db, &eval_ctx);
@@ -96,7 +112,7 @@ pub fn main() !void {
         if (!verify_mode) break;
 
 
-        const mistakes = try verify.verify_classes(&db, iteration);
+        const mistakes = try verify.verify_classes(&db, iteration, &proven_cache);
         if (mistakes == 0) {
             std.debug.print("\n[SUCCESS] PERFECT CLASSES ACHIEVED!\n", .{});
             break;

@@ -49,7 +49,7 @@ const Job = struct {
     lhs_start: usize,
     lhs_end: usize,
 };
-const QSize = 8192;
+const QSize = config.q_size;
 const Queue = RingBuffer(Result, QSize);
 
 pub const Enumerator = struct {
@@ -112,8 +112,29 @@ pub const Enumerator = struct {
             try self.db.expr_to_class.append(class_id);
             gop.value_ptr.* = eval.SmallClassList.init(class_id);
             try cost_list.append(expr_id);
+            
+            const dst = try self.db.class_vectors.reserve(class_id);
+            switch (expr) {
+                .variable, .constant => eval.fill_leaf(self.ctx, expr, dst),
+                .unary => |u| eval.combine_unary_into(
+                    u.op, self.db.class_vectors.get(self.db.expr_to_class.items[u.expr]), dst),
+                .binary => |b| eval.combine_binary_into(
+                    b.op,
+                    self.db.class_vectors.get(self.db.expr_to_class.items[b.lhs]),
+                    self.db.class_vectors.get(self.db.expr_to_class.items[b.rhs]),
+                    dst),
+                .select => |s| eval.combine_select_into(
+                    self.db.class_vectors.get(self.db.expr_to_class.items[s.cond]),
+                    self.db.class_vectors.get(self.db.expr_to_class.items[s.true_val]),
+                    self.db.class_vectors.get(self.db.expr_to_class.items[s.false_val]),
+                    dst),
+            }
         } else {
-            try self.db.expr_to_class.append(gop.value_ptr.*.inline_val);
+            const class_id = switch (gop.value_ptr.*) {
+                .inline_val => |id| id,
+                .dynamic => |list| list.items[0],
+            };
+            try self.db.expr_to_class.append(class_id);
         }
     }
 
@@ -201,9 +222,14 @@ pub const Enumerator = struct {
                     if (c1 >= self.exprs_by_cost.items.len or c2 >= self.exprs_by_cost.items.len or c3 >= self.exprs_by_cost.items.len) continue;
 
                     const len = self.exprs_by_cost.items[c1].items.len;
+                    const t_len = self.exprs_by_cost.items[c2].items.len;
+                    const f_len = self.exprs_by_cost.items[c3].items.len;
+                    const fan_out = @max(1, t_len * f_len);
+                    const select_chunk = @max(1, config.q_size / (4 * fan_out));
+                    
                     var i: usize = 0;
-                    while (i < len) : (i += chunk_size) {
-                        const end = @min(i + chunk_size, len);
+                    while (i < len) : (i += select_chunk) {
+                        const end = @min(i + select_chunk, len);
                         try self.jobs.append(.{
                             .job_type = .select,
                             .op = 0,
@@ -224,6 +250,9 @@ pub const Enumerator = struct {
         const status = &self.workers_done[worker_id];
         status.store(false, .release);
 
+        const scratch = self.allocator.alloc(eval.Vector64, self.ctx.num_batches) catch @panic("oom");
+        defer self.allocator.free(scratch);
+
         while (true) {
             const job_idx = self.job_counter.fetchAdd(1, .monotonic);
             if (job_idx >= self.jobs.items.len) {
@@ -238,7 +267,9 @@ pub const Enumerator = struct {
                     for (job.lhs_start..job.lhs_end) |i| {
                         const e1 = list[i];
                         const expr = ast.Expr{ .unary = .{ .op = op, .expr = e1 } };
-                        const fp = eval.ExpressionDatabase.eval_and_hash(self.ctx, expr, &self.db.expr_arena);
+                        const child_vec = self.db.class_vectors.get(self.db.expr_to_class.items[e1]);
+                        eval.combine_unary_into(op, child_vec, scratch);
+                        const fp = eval.hash_vectors(scratch);
                         while (!queue.push(.{ .expr = expr, .hash = fp })) {
                             std.atomic.spinLoopHint();
                         }
@@ -253,6 +284,7 @@ pub const Enumerator = struct {
 
                     for (job.lhs_start..job.lhs_end) |i| {
                         const e1 = lhs_list[i];
+                        const lhs_vec = self.db.class_vectors.get(self.db.expr_to_class.items[e1]);
                         for (rhs_list) |e2| {
                             if (config.use_pruning) {
                                 if (prune.is_pruned_depth1(op, e1, e2, job.c1, job.c2, &self.db.expr_arena)) continue;
@@ -261,7 +293,9 @@ pub const Enumerator = struct {
                             }
 
                             const expr = ast.Expr{ .binary = .{ .op = op, .lhs = e1, .rhs = e2 } };
-                            const fp = eval.ExpressionDatabase.eval_and_hash(self.ctx, expr, &self.db.expr_arena);
+                            const rhs_vec = self.db.class_vectors.get(self.db.expr_to_class.items[e2]);
+                            eval.combine_binary_into(op, lhs_vec, rhs_vec, scratch);
+                            const fp = eval.hash_vectors(scratch);
                             while (!queue.push(.{ .expr = expr, .hash = fp })) {
                                 std.atomic.spinLoopHint();
                             }
@@ -275,10 +309,14 @@ pub const Enumerator = struct {
 
                     for (job.lhs_start..job.lhs_end) |i| {
                         const cond = cond_list[i];
+                        const cond_vec = self.db.class_vectors.get(self.db.expr_to_class.items[cond]);
                         for (t_list) |t| {
+                            const t_vec = self.db.class_vectors.get(self.db.expr_to_class.items[t]);
                             for (f_list) |f| {
                                 const expr = ast.Expr{ .select = .{ .cond = cond, .true_val = t, .false_val = f } };
-                                const fp = eval.ExpressionDatabase.eval_and_hash(self.ctx, expr, &self.db.expr_arena);
+                                const f_vec = self.db.class_vectors.get(self.db.expr_to_class.items[f]);
+                                eval.combine_select_into(cond_vec, t_vec, f_vec, scratch);
+                                const fp = eval.hash_vectors(scratch);
                                 while (!queue.push(.{ .expr = expr, .hash = fp })) {
                                     std.atomic.spinLoopHint();
                                 }

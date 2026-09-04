@@ -1,8 +1,80 @@
 const std = @import("std");
 const ast = @import("ast.zig");
+const vector_arena = @import("vector_arena.zig");
 const expr_arena = @import("arena.zig");
 
 const config = @import("config.zig");
+
+pub fn fill_leaf(ctx: *const EvaluationContext, expr: ast.Expr, out: []Vector64) void {
+    switch (expr) {
+        .variable => |v| {
+            const src = switch (v) {
+                .x => ctx.x_batches,
+                .y => ctx.y_batches,
+                .z => ctx.z_batches,
+            };
+            @memcpy(out, src[0..out.len]);
+        },
+        .constant => |c| @memset(out, @as(Vector64, @splat(c))),
+        else => unreachable,
+    }
+}
+
+pub fn combine_unary_into(op: ast.UnOp, child: []const Vector64, out: []Vector64) void {
+    switch (op) {
+        inline else => |comptime_op| {
+            for (child, 0..) |cv, i| {
+                out[i] = switch (comptime_op) {
+                    .not => ~cv,
+                    .neg => @as(Vector64, @splat(0)) -% cv,
+                    .clz => @as(Vector64, @intCast(@clz(cv))),
+                    .ctz => @as(Vector64, @intCast(@ctz(cv))),
+                    .popcount => @as(Vector64, @intCast(@popCount(cv))),
+                };
+            }
+        }
+    }
+}
+
+pub fn combine_binary_into(op: ast.BinOp, lhs: []const Vector64, rhs: []const Vector64, out: []Vector64) void {
+    switch (op) {
+        inline else => |comptime_op| {
+            for (0..out.len) |i| {
+                const l = lhs[i];
+                const r = rhs[i];
+                out[i] = switch (comptime_op) {
+                    .add => l +% r,
+                    .sub => l -% r,
+                    .mul => l *% r,
+                    .and_op => l & r,
+                    .or_op => l | r,
+                    .xor => l ^ r,
+                    .shl => l << @as(@Vector(BATCH_SIZE, u5), @truncate(r)),
+                    .lshr => l >> @as(@Vector(BATCH_SIZE, u5), @truncate(r)),
+                    .ashr => @as(Vector64, @bitCast(@as(@Vector(BATCH_SIZE, i32), @bitCast(l)) >> @as(@Vector(BATCH_SIZE, u5), @truncate(r)))),
+                    .eq => @select(u32, l == r, @as(Vector64, @splat(1)), @as(Vector64, @splat(0))),
+                    .ult => @select(u32, l < r, @as(Vector64, @splat(1)), @as(Vector64, @splat(0))),
+                    .ule => @select(u32, l <= r, @as(Vector64, @splat(1)), @as(Vector64, @splat(0))),
+                    .slt => @select(u32, @as(@Vector(BATCH_SIZE, i32), @bitCast(l)) < @as(@Vector(BATCH_SIZE, i32), @bitCast(r)), @as(Vector64, @splat(1)), @as(Vector64, @splat(0))),
+                    .sle => @select(u32, @as(@Vector(BATCH_SIZE, i32), @bitCast(l)) <= @as(@Vector(BATCH_SIZE, i32), @bitCast(r)), @as(Vector64, @splat(1)), @as(Vector64, @splat(0))),
+                };
+            }
+        }
+    }
+}
+
+pub fn combine_select_into(cond: []const Vector64, t: []const Vector64, f: []const Vector64, out: []Vector64) void {
+    for (0..out.len) |i| {
+        const cv = cond[i] != @as(Vector64, @splat(0));
+        out[i] = @select(u32, cv, t[i], f[i]);
+    }
+}
+
+pub fn hash_vectors(vectors: []const Vector64) FingerprintHash {
+    var hasher = std.hash.Wyhash.init(0);
+    hasher.update(std.mem.sliceAsBytes(vectors));
+    return hasher.final();
+}
 
 pub const BATCH_SIZE = 64;
 pub const Vector64 = @Vector(BATCH_SIZE, u32);
@@ -170,14 +242,20 @@ pub const ExpressionDatabase = struct {
     expr_to_class: std.ArrayList(ClassId),
     classes: std.ArrayList(EquivalenceClass),
     fp_to_class: std.AutoHashMap(FingerprintHash, SmallClassList),
+    class_vectors: vector_arena.ClassVectorArena,
 
-    pub fn init(allocator: std.mem.Allocator) !ExpressionDatabase {
+    pub fn init(allocator: std.mem.Allocator, num_batches: usize) !ExpressionDatabase {
         return .{
             .allocator = allocator,
             .expr_arena = try expr_arena.ExpressionArena.init(allocator),
-            .expr_to_class = std.ArrayList(ClassId).init(allocator),
+            .expr_to_class = blk: {
+                var list = std.ArrayList(ClassId).init(allocator);
+                list.ensureTotalCapacity(5_000_000) catch @panic("oom");
+                break :blk list;
+            },
             .classes = std.ArrayList(EquivalenceClass).init(allocator),
             .fp_to_class = std.AutoHashMap(FingerprintHash, SmallClassList).init(allocator),
+            .class_vectors = try vector_arena.ClassVectorArena.init(allocator, num_batches),
         };
     }
 
@@ -190,6 +268,7 @@ pub const ExpressionDatabase = struct {
         self.classes.deinit();
         self.expr_to_class.deinit();
         self.expr_arena.deinit();
+        self.class_vectors.deinit();
     }
 
 
