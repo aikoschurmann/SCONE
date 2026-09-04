@@ -3,9 +3,12 @@ const std = @import("std");
 
 const ast = @import("ast.zig");
 const eval = @import("eval.zig");
+const database = @import("database.zig");
+const config = @import("config.zig");
+const cli = @import("cli.zig");
+const telemetry = @import("telemetry.zig");
 const verify = @import("verify.zig");
 const enumerate = @import("enumerate.zig");
-const config = @import("config.zig");
 
 
 fn sigintHandler(sig: c_int) callconv(.C) void {
@@ -15,6 +18,10 @@ fn sigintHandler(sig: c_int) callconv(.C) void {
 }
 
 pub fn main() !void {
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    
     var act = std.posix.Sigaction{
         .handler = .{ .handler = sigintHandler },
         .mask = std.posix.empty_sigset,
@@ -22,27 +29,10 @@ pub fn main() !void {
     };
     try std.posix.sigaction(std.posix.SIG.INT, &act, null);
 
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer _ = gpa.deinit();
-    const allocator = gpa.allocator();
-
-    var max_cost: usize = 2;
-    var verify_mode: bool = false;
-
-    var args = std.process.args();
-    _ = args.skip(); // skip binary name
-    while (args.next()) |arg| {
-        if (std.mem.eql(u8, arg, "--cost") or std.mem.eql(u8, arg, "-c")) {
-            const cost_str = args.next() orelse return error.MissingArgument;
-            max_cost = try std.fmt.parseInt(usize, cost_str, 10);
-        } else if (std.mem.eql(u8, arg, "--verify") or std.mem.eql(u8, arg, "-v")) {
-            verify_mode = true;
-        } else if (std.mem.eql(u8, arg, "unpruned")) {
-            // legacy arg, ignore
-        }
-    }
-
-    const num_threads = std.Thread.getCpuCount() catch 4;
+    const parsed_args = try cli.parseArgs(allocator);
+    const max_cost = parsed_args.max_cost;
+    const num_threads = if (parsed_args.threads == 0) std.Thread.getCpuCount() catch 4 else parsed_args.threads;
+    const verify_mode = true; // Always verify if we are running the CEGIS loop
     
     var proven_cache = std.AutoHashMap(u64, void).init(allocator);
     defer proven_cache.deinit();
@@ -54,11 +44,11 @@ pub fn main() !void {
             std.debug.print("======================================\n", .{});
         }
 
-        std.fs.cwd().makeDir(config.out_dir) catch |err| { if (err != error.PathAlreadyExists) return err; };
+        std.fs.cwd().makeDir(config.active.out_dir) catch |err| { if (err != error.PathAlreadyExists) return err; };
         var eval_ctx = try eval.EvaluationContext.init(allocator);
         defer eval_ctx.deinit();
 
-        var db = try eval.ExpressionDatabase.init(allocator, eval_ctx.num_batches);
+        var db = try database.ExpressionDatabase.init(allocator, eval_ctx.num_batches);
         defer db.deinit();
 
         var enumerator = try enumerate.Enumerator.init(allocator, &db, &eval_ctx);
@@ -101,13 +91,9 @@ pub fn main() !void {
         std.debug.print("Active Evaluation Grid Size:    {}\n", .{eval_ctx.total_samples});
         std.debug.print("---------------------\n\n", .{});
         
-        const tel_file = std.fs.cwd().openFile(config.telemetry_file, .{ .mode = .read_write }) catch |err| switch (err) {
-            error.FileNotFound => try std.fs.cwd().createFile(config.telemetry_file, .{}),
-            else => return err,
-        };
-        try tel_file.seekFromEnd(0);
-        try tel_file.writer().print("{{\"event\": \"metrics\", \"iteration\": {d}, \"total_ast_nodes\": {d}, \"total_classes\": {d}, \"perfect_classes\": {d}, \"colliding_classes\": {d}, \"exprs_in_collisions\": {d}, \"eval_grid_size\": {d}}}\n", .{iteration, db.expr_arena.len, db.classes.items.len, perfect_classes, colliding_classes, trapped_exprs, eval_ctx.total_samples});
-        tel_file.close();
+        var tel = try telemetry.Telemetry.init(config.active.telemetry_file);
+        try tel.logMetrics(iteration, db.expr_arena.len, db.classes.items.len, perfect_classes, colliding_classes, trapped_exprs, eval_ctx.total_samples);
+        tel.deinit();
 
         if (!verify_mode) break;
 

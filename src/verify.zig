@@ -1,6 +1,8 @@
 const std = @import("std");
 const ast = @import("ast.zig");
 const eval_mod = @import("eval.zig");
+const database = @import("database.zig");
+const telemetry = @import("telemetry.zig");
 const config = @import("config.zig");
 const builtin = @import("builtin");
 
@@ -358,7 +360,7 @@ fn verify_worker(
                 unique_ces.put(ce, {}) catch {};
                 const ucount = unique_ces.count();
                 ce_mutex.unlock();
-                if (ucount >= config.max_counterexamples_per_iter) {
+                if (ucount >= config.active.max_counterexamples_per_iter) {
                     stop_flag.store(true, .release);
                 }
             },
@@ -386,7 +388,7 @@ fn verify_worker(
     }
 }
 
-pub fn verify_classes(db: *eval_mod.ExpressionDatabase, iteration: usize, proven_cache: *std.AutoHashMap(u64, void)) !usize {
+pub fn verify_classes(db: *database.ExpressionDatabase, iteration: usize, proven_cache: *std.AutoHashMap(u64, void)) !usize {
     var timer = try std.time.Timer.start();
     
     
@@ -436,7 +438,7 @@ pub fn verify_classes(db: *eval_mod.ExpressionDatabase, iteration: usize, proven
     std.sort.block(CollidingClass, colliding_list.items, {}, CollidingClass.lessThan);
     
     // Take the top 500k fattest classes (or less if not enough)
-    const top_n = @min(colliding_list.items.len, config.max_classes_to_verify);
+    const top_n = @min(colliding_list.items.len, config.active.max_classes_to_verify);
     const top_slice = colliding_list.items[0..top_n];
     
     // Randomly shuffle the top slice to ensure Z3 diversity and prevent timeout deadlocks
@@ -446,8 +448,8 @@ pub fn verify_classes(db: *eval_mod.ExpressionDatabase, iteration: usize, proven
 
     
 
-    const ce_file = std.fs.cwd().openFile(config.counterexamples_file, .{ .mode = .read_write }) catch |err| switch (err) {
-        error.FileNotFound => try std.fs.cwd().createFile(config.counterexamples_file, .{}),
+    const ce_file = std.fs.cwd().openFile(config.active.counterexamples_file, .{ .mode = .read_write }) catch |err| switch (err) {
+        error.FileNotFound => try std.fs.cwd().createFile(config.active.counterexamples_file, .{}),
         else => return err,
     };
     defer ce_file.close();
@@ -493,21 +495,20 @@ pub fn verify_classes(db: *eval_mod.ExpressionDatabase, iteration: usize, proven
     while (ce_it.next()) |ce| {
         try ce_writer.print("{},{},{}\n", .{ce.x, ce.y, ce.z});
         unique_count += 1;
-        if (unique_count >= config.max_counterexamples_per_iter) break;
+        if (unique_count >= config.active.max_counterexamples_per_iter) break;
     }
     
     if (stop_flag.load(.acquire)) {
-        std.debug.print("\n[Early Stop] Counterexample cap ({}) reached! Verification aborted early.\n", .{config.max_counterexamples_per_iter});
+        std.debug.print("\n[Early Stop] Counterexample cap ({}) reached! Verification aborted early.\n", .{config.active.max_counterexamples_per_iter});
     }
     
     const elapsed_s = @as(f64, @floatFromInt(timer.read())) / std.time.ns_per_s;
     std.debug.print("\nZ3 Verification complete in {d:.2}s. Raw CEs: {}, Unique CEs added: {}\n", .{elapsed_s, mistakes, unique_count});
     
     // Log telemetry JSON
-    const tel_file = try std.fs.cwd().openFile(config.telemetry_file, .{ .mode = .read_write });
-    defer tel_file.close();
-    try tel_file.seekFromEnd(0);
-    try tel_file.writer().print("{{\"event\": \"verify\", \"elapsed_s\": {d:.2}, \"iteration\": {d}, \"classes_verified\": {d}, \"mistakes_found\": {d}, \"timeouts\": {d}}}\n", .{elapsed_s, iteration, top_slice.len, mistakes, timeouts});
+    var tel = try telemetry.Telemetry.init(config.active.telemetry_file);
+    try tel.logVerify(elapsed_s, iteration, top_slice.len, mistakes, timeouts);
+    tel.deinit();
     
     return mistakes;
 }

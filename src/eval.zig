@@ -1,3 +1,4 @@
+const database = @import("database.zig");
 const std = @import("std");
 const ast = @import("ast.zig");
 const vector_arena = @import("vector_arena.zig");
@@ -70,7 +71,7 @@ pub fn combine_select_into(cond: []const Vector64, t: []const Vector64, f: []con
     }
 }
 
-pub fn hash_vectors(vectors: []const Vector64) FingerprintHash {
+pub fn hash_vectors(vectors: []const Vector64) database.FingerprintHash {
     var hasher = std.hash.Wyhash.init(0);
     hasher.update(std.mem.sliceAsBytes(vectors));
     return hasher.final();
@@ -104,7 +105,7 @@ pub const EvaluationContext = struct {
     pub fn init(allocator: std.mem.Allocator) !EvaluationContext {
         // Calculate dynamic capacity based on file size + padding
         var ce_count: usize = 0;
-        if (std.fs.cwd().openFile(config.counterexamples_file, .{})) |f| {
+        if (std.fs.cwd().openFile(config.active.counterexamples_file, .{})) |f| {
             var buf_reader = std.io.bufferedReader(f.reader());
             var stream = buf_reader.reader();
             var buf: [1024]u8 = undefined;
@@ -114,7 +115,7 @@ pub const EvaluationContext = struct {
             f.close();
         } else |_| {}
         
-        const total_samples = config.edge_grid_samples + ce_count + config.num_random_samples;
+        const total_samples = (if (config.active.use_cartesian_grid) config.num_edge_cases * config.num_edge_cases * config.num_edge_cases else 0) + ce_count + config.active.num_random_samples;
         const num_batches = (total_samples + BATCH_SIZE - 1) / BATCH_SIZE;
         
         var ctx = EvaluationContext{
@@ -133,7 +134,7 @@ pub const EvaluationContext = struct {
         var idx: usize = 0;
 
         // 1) The exhaustive edge-case grid (if enabled)
-        if (config.use_cartesian_grid) {
+        if (config.active.use_cartesian_grid) {
             for (config.base_edge_cases) |x| {
                 for (config.base_edge_cases) |y| {
                     for (config.base_edge_cases) |z| {
@@ -150,7 +151,7 @@ pub const EvaluationContext = struct {
         //    edge grid but diverge on generic inputs, without weakening any
         //    of the existing boundary coverage.
         // Read counterexamples from CEGIS loop
-        const ce_file = std.fs.cwd().openFile(config.counterexamples_file, .{}) catch null;
+        const ce_file = std.fs.cwd().openFile(config.active.counterexamples_file, .{}) catch null;
         ce_count = 0;
         if (ce_file) |f| {
             defer f.close();
@@ -189,91 +190,9 @@ pub const EvaluationContext = struct {
     }
 };
 
-pub const FingerprintHash = u64;
-
-pub const EquivalenceClass = struct {
-    hash: FingerprintHash,
-    canonical_expr: ast.ExprId,
-};
 
 
-pub const ClassId = u32;
-
-pub const SmallClassList = union(enum) {
-    inline_val: ClassId,
-    dynamic: std.ArrayList(ClassId),
-
-    pub fn init(first_val: ClassId) SmallClassList {
-        return .{ .inline_val = first_val };
-    }
-
-    pub fn append(self: *SmallClassList, allocator: std.mem.Allocator, val: ClassId) !void {
-        switch (self.*) {
-            .inline_val => |existing_val| {
-                var list = try std.ArrayList(ClassId).initCapacity(allocator, 4);
-                list.appendAssumeCapacity(existing_val);
-                list.appendAssumeCapacity(val);
-                self.* = .{ .dynamic = list };
-            },
-            .dynamic => |*list| {
-                try list.append(val);
-            },
-        }
-    }
-
-    pub fn slice(self: *const SmallClassList) []const ClassId {
-        switch (self.*) {
-            .inline_val => |*val| return @as(*const [1]ClassId, @ptrCast(val))[0..],
-            .dynamic => |*list| return list.items,
-        }
-    }
-
-    pub fn deinit(self: *SmallClassList) void {
-        if (self.* == .dynamic) {
-            self.dynamic.deinit();
-        }
-    }
-};
-
-pub const ExpressionDatabase = struct {
-    allocator: std.mem.Allocator,
-    
-    expr_arena: expr_arena.ExpressionArena,
-    expr_to_class: std.ArrayList(ClassId),
-    classes: std.ArrayList(EquivalenceClass),
-    fp_to_class: std.AutoHashMap(FingerprintHash, SmallClassList),
-    class_vectors: vector_arena.ClassVectorArena,
-
-    pub fn init(allocator: std.mem.Allocator, num_batches: usize) !ExpressionDatabase {
-        return .{
-            .allocator = allocator,
-            .expr_arena = try expr_arena.ExpressionArena.init(allocator),
-            .expr_to_class = blk: {
-                var list = std.ArrayList(ClassId).init(allocator);
-                list.ensureTotalCapacity(5_000_000) catch @panic("oom");
-                break :blk list;
-            },
-            .classes = std.ArrayList(EquivalenceClass).init(allocator),
-            .fp_to_class = std.AutoHashMap(FingerprintHash, SmallClassList).init(allocator),
-            .class_vectors = try vector_arena.ClassVectorArena.init(allocator, num_batches),
-        };
-    }
-
-    pub fn deinit(self: *ExpressionDatabase) void {
-        var it = self.fp_to_class.valueIterator();
-        while (it.next()) |list| {
-            list.deinit();
-        }
-        self.fp_to_class.deinit();
-        self.classes.deinit();
-        self.expr_to_class.deinit();
-        self.expr_arena.deinit();
-        self.class_vectors.deinit();
-    }
-
-
-
-    pub fn eval_batch(ctx: *const EvaluationContext, expr: ast.Expr, expr_arena_ref: *const expr_arena.ExpressionArena, batch_idx: usize) Vector64 {
+pub fn eval_batch(ctx: *const EvaluationContext, expr: ast.Expr, expr_arena_ref: *const expr_arena.ExpressionArena, batch_idx: usize) Vector64 {
         switch (expr) {
             .variable => |v| {
                 return switch (v) {
@@ -331,7 +250,7 @@ pub const ExpressionDatabase = struct {
         }
     }
 
-    pub fn eval_and_hash(ctx: *const EvaluationContext, expr: ast.Expr, expr_arena_ref: *const expr_arena.ExpressionArena) FingerprintHash {
+    pub fn eval_and_hash(ctx: *const EvaluationContext, expr: ast.Expr, expr_arena_ref: *const expr_arena.ExpressionArena) database.FingerprintHash {
         var hasher = std.hash.Wyhash.init(0);
         for (0..ctx.num_batches) |batch_idx| {
             const batch_res = eval_batch(ctx, expr, expr_arena_ref, batch_idx);
@@ -340,7 +259,3 @@ pub const ExpressionDatabase = struct {
         }
         return hasher.final();
     }
-};
-
-
-

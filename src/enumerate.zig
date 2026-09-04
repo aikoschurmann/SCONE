@@ -1,6 +1,8 @@
 const std = @import("std");
 const ast = @import("ast.zig");
 const eval = @import("eval.zig");
+const database = @import("database.zig");
+const telemetry = @import("telemetry.zig");
 const config = @import("config.zig");
 const prune = @import("prune.zig");
 
@@ -36,7 +38,7 @@ fn RingBuffer(comptime T: type, comptime capacity: usize) type {
 
 const Result = struct {
     expr: ast.Expr,
-    hash: eval.FingerprintHash,
+    hash: database.FingerprintHash,
 };
 
 const JobType = enum { unop, binop, select };
@@ -53,7 +55,7 @@ const QSize = config.q_size;
 const Queue = RingBuffer(Result, QSize);
 
 pub const Enumerator = struct {
-    db: *eval.ExpressionDatabase,
+    db: *database.ExpressionDatabase,
     ctx: *const eval.EvaluationContext,
     exprs_by_cost: std.ArrayList(std.ArrayList(ast.ExprId)),
     allocator: std.mem.Allocator,
@@ -64,7 +66,7 @@ pub const Enumerator = struct {
     queues: []Queue,
     workers_done: []std.atomic.Value(bool),
 
-    pub fn init(allocator: std.mem.Allocator, db: *eval.ExpressionDatabase, ctx: *const eval.EvaluationContext) !Enumerator {
+    pub fn init(allocator: std.mem.Allocator, db: *database.ExpressionDatabase, ctx: *const eval.EvaluationContext) !Enumerator {
         return .{
             .db = db,
             .ctx = ctx,
@@ -99,18 +101,18 @@ pub const Enumerator = struct {
         }
     }
 
-    fn register_expr(self: *Enumerator, cost_list: *std.ArrayList(ast.ExprId), expr: ast.Expr, hash: eval.FingerprintHash) !void {
+    fn register_expr(self: *Enumerator, cost_list: *std.ArrayList(ast.ExprId), expr: ast.Expr, hash: database.FingerprintHash) !void {
         const gop = try self.db.fp_to_class.getOrPut(hash);
         const expr_id = try self.db.expr_arena.add(expr);
         if (!gop.found_existing) {
-            const class_id = @as(eval.ClassId, @intCast(self.db.classes.items.len));
+            const class_id = @as(database.ClassId, @intCast(self.db.classes.items.len));
 
             try self.db.classes.append(.{
                 .hash = hash,
                 .canonical_expr = expr_id,
             });
             try self.db.expr_to_class.append(class_id);
-            gop.value_ptr.* = eval.SmallClassList.init(class_id);
+            gop.value_ptr.* = database.SmallClassList.init(class_id);
             try cost_list.append(expr_id);
             
             const dst = try self.db.class_vectors.reserve(class_id);
@@ -144,13 +146,13 @@ pub const Enumerator = struct {
         for (0..3) |i| {
             const v = @as(ast.Var, @enumFromInt(i));
             const expr = ast.Expr{ .variable = v };
-            const fp = eval.ExpressionDatabase.eval_and_hash(self.ctx, expr, &self.db.expr_arena);
+            const fp = eval.eval_and_hash(self.ctx, expr, &self.db.expr_arena);
             try self.register_expr(&cost0, expr, fp);
         }
 
         for (config.search_constants) |c| {
             const expr = ast.Expr{ .constant = c };
-            const fp = eval.ExpressionDatabase.eval_and_hash(self.ctx, expr, &self.db.expr_arena);
+            const fp = eval.eval_and_hash(self.ctx, expr, &self.db.expr_arena);
             try self.register_expr(&cost0, expr, fp);
         }
 
@@ -164,7 +166,7 @@ pub const Enumerator = struct {
 
         const chunk_size = 512;
 
-        if (config.enable_unary and k >= 1) {
+        if (config.active.enable_unary and k >= 1) {
             const c1 = k - 1;
             if (c1 < self.exprs_by_cost.items.len) {
                 const len = self.exprs_by_cost.items[c1].items.len;
@@ -214,7 +216,7 @@ pub const Enumerator = struct {
             }
         }
 
-        if (config.enable_select and k >= 1) {
+        if (config.active.enable_select and k >= 1) {
             const target = k - 1;
             for (0..target + 1) |c1| {
                 for (0..target - c1 + 1) |c2| {
@@ -286,7 +288,7 @@ pub const Enumerator = struct {
                         const e1 = lhs_list[i];
                         const lhs_vec = self.db.class_vectors.get(self.db.expr_to_class.items[e1]);
                         for (rhs_list) |e2| {
-                            if (config.use_pruning) {
+                            if (config.active.use_pruning) {
                                 if (prune.is_pruned_depth1(op, e1, e2, job.c1, job.c2, &self.db.expr_arena)) continue;
                             } else {
                                 if (is_comm and same_cost and e1 > e2) continue;
@@ -387,13 +389,9 @@ pub const Enumerator = struct {
         const final_speed = if (total_elapsed_s > 0) @as(f64, @floatFromInt(exprs_processed)) / total_elapsed_s else 0.0;
         std.debug.print("\rCost {d}: Processed {d} exprs ({d} unique) | {d:.1} expr/s | elapsed: {d:.1}s - DONE.   \n", .{k, exprs_processed, self.db.classes.items.len, final_speed, total_elapsed_s});
         
-        const tel_file = std.fs.cwd().openFile(config.telemetry_file, .{ .mode = .read_write }) catch |err| switch (err) {
-            error.FileNotFound => try std.fs.cwd().createFile(config.telemetry_file, .{}),
-            else => return err,
-        };
-        try tel_file.seekFromEnd(0);
-        try tel_file.writer().print("{{\"event\": \"evaluate\", \"iteration\": {d}, \"cost\": {d}, \"processed_exprs\": {d}, \"speed_exprs_per_sec\": {d:.1}, \"elapsed_s\": {d:.2}}}\n", .{iteration, k, exprs_processed, final_speed, total_elapsed_s});
-        tel_file.close();
+        var tel = try telemetry.Telemetry.init(config.active.telemetry_file);
+        try tel.logEvaluate(iteration, k, exprs_processed, final_speed, total_elapsed_s);
+        tel.deinit();
 
         for (0..num_threads) |w| {
             threads[w].join();
