@@ -58,9 +58,14 @@ pub fn main() !void {
         try enumerator.setup_threads(num_threads);
         try enumerator.seed_cost_0();
 
+        const enum_start = std.time.milliTimestamp();
         for (1..max_cost + 1) |c| {
             try enumerator.orchestrate_cost(c, num_threads, iteration);
         }
+        const enum_end = std.time.milliTimestamp();
+        const enum_elapsed_s = @as(f64, @floatFromInt(enum_end - enum_start)) / 1000.0;
+        const total_exprs = db.expr_arena.len;
+        _ = if (enum_elapsed_s > 0) @as(f64, @floatFromInt(total_exprs)) / enum_elapsed_s else 0;
 
         var perfect_classes: usize = 0;
         var colliding_classes: usize = 0;
@@ -99,9 +104,23 @@ pub fn main() !void {
         if (!verify_mode) break;
 
 
+        const verify_start = std.time.milliTimestamp();
         const res = try verify.verify_classes(&db, iteration, &proven_cache, num_threads);
-                if (config.active.is_perf_mode) {
-            std.debug.print("\n[PERF MODE] Benchmark complete. Exiting.\n", .{});
+        const verify_end = std.time.milliTimestamp();
+        const verify_elapsed_s = @as(f64, @floatFromInt(verify_end - verify_start)) / 1000.0;
+        _ = if (verify_elapsed_s > 0) @as(f64, @floatFromInt(colliding_classes)) / verify_elapsed_s else 0;
+        
+        if (config.active.is_perf_mode) {
+            const total_point_evals = total_exprs * eval_ctx.total_samples;
+            const eval_ops_per_sec = if (enum_elapsed_s > 0) @as(f64, @floatFromInt(total_point_evals)) / enum_elapsed_s else 0;
+            const verify_exprs_per_sec = if (verify_elapsed_s > 0) @as(f64, @floatFromInt(trapped_exprs)) / verify_elapsed_s else 0;
+            
+            std.debug.print("\n======================================\n", .{});
+            std.debug.print("          SCONE PERF SUMMARY          \n", .{});
+            std.debug.print("======================================\n", .{});
+            std.debug.print("Enumeration Throughput: {d:.1} Eval Ops/sec (Grid Points/sec)\n", .{eval_ops_per_sec});
+            std.debug.print("Verification Throughput: {d:.1} Z3 Eq-Checks/sec\n", .{verify_exprs_per_sec});
+            std.debug.print("======================================\n", .{});
             break;
         }
         

@@ -252,8 +252,8 @@ pub const Enumerator = struct {
         const status = &self.workers_done[worker_id];
         status.store(false, .release);
 
-        const scratch = self.allocator.alloc(eval.Vector64, self.ctx.num_batches) catch @panic("oom");
-        defer self.allocator.free(scratch);
+        const scratch = std.heap.page_allocator.alloc(eval.Vector64, self.ctx.num_batches) catch @panic("oom");
+        defer std.heap.page_allocator.free(scratch);
 
         while (true) {
             const job_idx = self.job_counter.fetchAdd(1, .monotonic);
