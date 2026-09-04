@@ -63,3 +63,33 @@ pub const ExpressionArena = struct {
         return self.chunks.items[chunk_idx][item_idx];
     }
 };
+
+
+pub fn format_expr(expr_id: ast.ExprId, arena: *const ExpressionArena, writer: anytype) !void {
+    const expr = arena.get(expr_id);
+    switch (expr) {
+        .variable => |v| try writer.print("{s}", .{@tagName(v)}),
+        .constant => |c| try writer.print("{}", .{c}),
+        .unary => |u| {
+            try writer.print("{s}(", .{@tagName(u.op)});
+            try format_expr(u.expr, arena, writer);
+            try writer.print(")", .{});
+        },
+        .binary => |b| {
+            try writer.print("(", .{});
+            try format_expr(b.lhs, arena, writer);
+            try writer.print(" {s} ", .{@tagName(b.op)});
+            try format_expr(b.rhs, arena, writer);
+            try writer.print(")", .{});
+        },
+        .select => |s| {
+            try writer.print("select(", .{});
+            try format_expr(s.cond, arena, writer);
+            try writer.print(", ", .{});
+            try format_expr(s.true_val, arena, writer);
+            try writer.print(", ", .{});
+            try format_expr(s.false_val, arena, writer);
+            try writer.print(")", .{});
+        },
+    }
+}

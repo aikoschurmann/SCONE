@@ -127,8 +127,7 @@ pub const Enumerator = struct {
             try self.register_expr(&cost0, expr, fp);
         }
 
-        const constants = [_]u32{ 0, 1, 2, 3, 4, 8, 16, 31, 32, 0xFFFFFFFF, 0x80000000, 0x7FFFFFFF, 0xFFFF };
-        for (constants) |c| {
+        for (config.search_constants) |c| {
             const expr = ast.Expr{ .constant = c };
             const fp = eval.ExpressionDatabase.eval_and_hash(self.ctx, expr, &self.db.expr_arena);
             try self.register_expr(&cost0, expr, fp);
@@ -137,9 +136,6 @@ pub const Enumerator = struct {
         try self.exprs_by_cost.append(cost0);
     }
 
-    pub fn isCommutative(op: ast.BinOp) bool {
-        return op == .add or op == .mul or op == .and_op or op == .or_op or op == .xor or op == .eq;
-    }
 
     pub fn prepare_jobs_for_cost(self: *Enumerator, k: usize) !void {
         self.jobs.clearRetainingCapacity();
@@ -147,7 +143,7 @@ pub const Enumerator = struct {
 
         const chunk_size = 512;
 
-        if (false and k >= 1) {
+        if (config.enable_unary and k >= 1) {
             const c1 = k - 1;
             if (c1 < self.exprs_by_cost.items.len) {
                 const len = self.exprs_by_cost.items[c1].items.len;
@@ -181,7 +177,7 @@ pub const Enumerator = struct {
                     const end = @min(i + chunk_size, len);
                     inline for (@typeInfo(ast.BinOp).Enum.fields) |field| {
                         const op = @as(ast.BinOp, @enumFromInt(field.value));
-                        if (!(isCommutative(op) and c1 > c2)) {
+                        if (!(op.isCommutative() and c1 > c2)) {
                             try self.jobs.append(.{
                                 .job_type = .binop,
                                 .op = field.value,
@@ -197,7 +193,7 @@ pub const Enumerator = struct {
             }
         }
 
-        if (false and k >= 1) {
+        if (config.enable_select and k >= 1) {
             const target = k - 1;
             for (0..target + 1) |c1| {
                 for (0..target - c1 + 1) |c2| {
@@ -252,7 +248,7 @@ pub const Enumerator = struct {
                     const op = @as(ast.BinOp, @enumFromInt(job.op));
                     const lhs_list = self.exprs_by_cost.items[job.c1].items;
                     const rhs_list = self.exprs_by_cost.items[job.c2].items;
-                    const is_comm = isCommutative(op);
+                    const is_comm = op.isCommutative();
                     const same_cost = job.c1 == job.c2;
 
                     for (job.lhs_start..job.lhs_end) |i| {

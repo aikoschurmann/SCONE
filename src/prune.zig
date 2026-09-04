@@ -2,7 +2,7 @@ const ast = @import("ast.zig");
 const arena = @import("arena.zig");
 
 pub fn is_pruned_depth1(op: ast.BinOp, e1: ast.ExprId, e2: ast.ExprId, c1: usize, c2: usize, expr_arena: *const arena.ExpressionArena) bool {
-    const is_comm = op == .add or op == .mul or op == .and_op or op == .or_op or op == .xor or op == .eq;
+    const is_comm = op.isCommutative();
     if (is_comm and c1 == c2 and e1 > e2) return true;
     
     const node1 = expr_arena.get(e1);

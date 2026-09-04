@@ -3,6 +3,12 @@ const std = @import("std");
 /// Centralized configuration for the SCONE Enumerator
 /// Pruning Configuration
 pub const use_pruning = true;
+pub const enable_unary = true;
+pub const enable_select = true;
+
+/// Worker Configuration
+pub const chunk_size = 512;
+pub const q_size = 131072;
 
 /// Evaluation Mode Configuration
 /// If false, the $O(N^3)$ Cartesian grid of base_edge_cases is disabled,
@@ -56,7 +62,7 @@ pub const base_edge_cases = blk: {
 
 pub const num_edge_cases = base_edge_cases.len;
 pub const edge_grid_samples = if (use_cartesian_grid) num_edge_cases * num_edge_cases * num_edge_cases else 0;
-pub const num_random_samples = 4096; // Baseline random slots
+pub const num_random_samples = 256; // Baseline random slots
 
 /// CEGIS Configuration
 pub const out_dir = "out";
@@ -64,6 +70,8 @@ pub const counterexamples_file = "out/counterexamples.txt";
 pub const telemetry_file = "out/telemetry.jsonl";
 pub const verification_export_file = "out/classes.txt";
 pub const max_classes_to_export = 50_000;
+pub const max_classes_to_verify = 500_000;
+pub const z3_timeout_ms = 1000;
 
 /// AST Generation Configuration
 /// These are the 13 constants that form the base of the search space at Cost 0.

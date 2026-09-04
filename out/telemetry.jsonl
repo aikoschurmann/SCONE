@@ -1,0 +1,3 @@
+{"event": "evaluate", "iteration": 1, "cost": 1, "processed_exprs": 6668, "speed_exprs_per_sec": 23233.4, "elapsed_s": 0.29}
+{"event": "evaluate", "iteration": 1, "cost": 1, "processed_exprs": 6668, "speed_exprs_per_sec": 303090.9, "elapsed_s": 0.02}
+{"event": "evaluate", "iteration": 1, "cost": 2, "processed_exprs": 1668330, "speed_exprs_per_sec": 486677.4, "elapsed_s": 3.43}

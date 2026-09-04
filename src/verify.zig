@@ -190,3 +190,161 @@ pub fn check_class_ctx(ctx: z3.Z3_context, class_id: u32, head: []const u32, nex
     
     return null;
 }
+
+
+pub const CollidingClass = struct {
+    id: u32,
+    size: usize,
+
+    fn lessThan(context: void, a: CollidingClass, b: CollidingClass) bool {
+        _ = context;
+        return a.size > b.size; // sort descending
+    }
+};
+
+fn verify_worker(
+    results: []?CE,
+    start_idx: usize,
+    end_idx: usize,
+    top_slice: []const CollidingClass,
+    head: []const u32,
+    next: []const u32,
+    arena: *const @import("arena.zig").ExpressionArena,
+    progress: *std.atomic.Value(usize),
+    total_classes: usize,
+) void {
+    const z3_cfg = z3.Z3_mk_config();
+    z3.Z3_set_param_value(z3_cfg, "timeout", std.fmt.allocPrintZ(std.heap.page_allocator, "{d}", .{config.z3_timeout_ms}) catch "1000"); 
+    const ctx = z3.Z3_mk_context(z3_cfg);
+    defer {
+        z3.Z3_del_context(ctx);
+        z3.Z3_del_config(z3_cfg);
+    }
+    
+    var idx = start_idx;
+    while (idx < end_idx) : (idx += 1) {
+        results[idx] = check_class_ctx(ctx, top_slice[idx].id, head, next, arena);
+        
+        const curr_prog = progress.fetchAdd(1, .monotonic) + 1;
+        if (curr_prog % 100 == 0 or curr_prog == total_classes) {
+            std.debug.print("\rZ3 SAT Proofs: {}/{} classes verified...", .{curr_prog, total_classes});
+        }
+    }
+}
+
+pub fn verify_classes(db: *eval_mod.ExpressionDatabase, iteration: usize) !usize {
+    var timer = try std.time.Timer.start();
+    
+    
+    
+    // Use a buffered writer for MASSIVE IO speedup
+    
+    
+
+    std.debug.print("Exporting collisions to Z3...\n", .{});
+    
+    // O(N) Linked-List Grouping to avoid O(N*C) 500-trillion loop
+    const num_exprs = db.expr_arena.len;
+    const num_classes = db.classes.items.len;
+    
+    var head = try std.heap.page_allocator.alloc(u32, num_classes);
+    defer std.heap.page_allocator.free(head);
+    @memset(head, 0xFFFFFFFF);
+    
+    var next = try std.heap.page_allocator.alloc(u32, num_exprs);
+    defer std.heap.page_allocator.free(next);
+    @memset(next, 0xFFFFFFFF);
+    
+    var class_sizes = try std.heap.page_allocator.alloc(u32, num_classes);
+    defer std.heap.page_allocator.free(class_sizes);
+    @memset(class_sizes, 0);
+
+    for (db.expr_to_class.items, 0..) |cid, expr_id| {
+        next[expr_id] = head[cid];
+        head[cid] = @as(u32, @intCast(expr_id));
+        class_sizes[cid] += 1;
+    }
+    
+    
+
+
+    
+    var colliding_list = std.ArrayList(CollidingClass).init(std.heap.page_allocator);
+    defer colliding_list.deinit();
+    
+    for (class_sizes, 0..) |sz, cid| {
+        if (sz > 1) {
+            try colliding_list.append(.{ .id = @as(u32, @intCast(cid)), .size = sz });
+        }
+    }
+    
+    // Sort descending by size
+    std.sort.block(CollidingClass, colliding_list.items, {}, CollidingClass.lessThan);
+    
+    // Take the top 500k fattest classes (or less if not enough)
+    const top_n = @min(colliding_list.items.len, config.max_classes_to_verify);
+    const top_slice = colliding_list.items[0..top_n];
+    
+    // Randomly shuffle the top slice to ensure Z3 diversity and prevent timeout deadlocks
+    var prng = std.rand.DefaultPrng.init(@as(u64, @intCast(std.time.milliTimestamp())));
+    const random = prng.random();
+    random.shuffle(CollidingClass, top_slice);
+
+    
+
+    const ce_file = std.fs.cwd().openFile(config.counterexamples_file, .{ .mode = .read_write }) catch |err| switch (err) {
+        error.FileNotFound => try std.fs.cwd().createFile(config.counterexamples_file, .{}),
+        else => return err,
+    };
+    defer ce_file.close();
+    try ce_file.seekFromEnd(0);
+    const ce_writer = ce_file.writer();
+
+    const results = try std.heap.page_allocator.alloc(?CE, top_slice.len);
+    defer std.heap.page_allocator.free(results);
+    
+    var pool: std.Thread.Pool = undefined;
+    try pool.init(.{ .allocator = std.heap.page_allocator });
+    defer pool.deinit();
+    
+    var wg = std.Thread.WaitGroup{};
+    
+    const num_threads = std.Thread.getCpuCount() catch 4;
+    std.debug.print("Z3 SAT Solver: Spawning {} parallel threads across CPU cores...\n", .{num_threads});
+    
+    const chunk_size = (top_slice.len + num_threads - 1) / num_threads;
+    
+    var progress = std.atomic.Value(usize).init(0);
+    
+    var t: usize = 0;
+    while (t < num_threads) : (t += 1) {
+        const start_idx = t * chunk_size;
+        const end_idx = @min(start_idx + chunk_size, top_slice.len);
+        if (start_idx >= end_idx) continue;
+        
+        pool.spawnWg(&wg, verify_worker, .{ results, start_idx, end_idx, top_slice, head, next, &db.expr_arena, &progress, top_slice.len });
+    }
+    wg.wait();
+    
+    var mistakes: usize = 0;
+    const timeouts: usize = 0;
+    
+    for (results) |res| {
+        if (res) |ce| {
+            try ce_writer.print("{},{},{}\n", .{ce.x, ce.y, ce.z});
+            mistakes += 1;
+            if (mistakes >= 500) break;
+        }
+    }
+    
+    const elapsed_s = @as(f64, @floatFromInt(timer.read())) / std.time.ns_per_s;
+    std.debug.print("\nZ3 Verification complete in {d:.2}s. Mistakes found: {}\n", .{elapsed_s, mistakes});
+    
+    // Log telemetry JSON
+    const tel_file = try std.fs.cwd().openFile(config.telemetry_file, .{ .mode = .read_write });
+    defer tel_file.close();
+    try tel_file.seekFromEnd(0);
+    try tel_file.writer().print("{{\"event\": \"verify\", \"elapsed_s\": {d:.2}, \"iteration\": {d}, \"classes_verified\": {d}, \"mistakes_found\": {d}, \"timeouts\": {d}}}\n", .{elapsed_s, iteration, top_slice.len, mistakes, timeouts});
+    
+    return mistakes;
+}

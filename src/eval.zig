@@ -124,6 +124,7 @@ pub const EquivalenceClass = struct {
     canonical_expr: ast.ExprId,
 };
 
+
 pub const ClassId = u32;
 
 pub const SmallClassList = union(enum) {
@@ -164,6 +165,7 @@ pub const SmallClassList = union(enum) {
 
 pub const ExpressionDatabase = struct {
     allocator: std.mem.Allocator,
+    
     expr_arena: expr_arena.ExpressionArena,
     expr_to_class: std.ArrayList(ClassId),
     classes: std.ArrayList(EquivalenceClass),
@@ -190,7 +192,8 @@ pub const ExpressionDatabase = struct {
         self.expr_arena.deinit();
     }
 
-    // Evaluate a single batch recursively
+
+
     pub fn eval_batch(ctx: *const EvaluationContext, expr: ast.Expr, expr_arena_ref: *const expr_arena.ExpressionArena, batch_idx: usize) Vector64 {
         switch (expr) {
             .variable => |v| {
@@ -206,7 +209,6 @@ pub const ExpressionDatabase = struct {
             .unary => |un| {
                 const child_expr = expr_arena_ref.get(un.expr);
                 const child_fp = eval_batch(ctx, child_expr, expr_arena_ref, batch_idx);
-
                 return switch (un.op) {
                     .not => ~child_fp,
                     .neg => @as(Vector64, @splat(0)) -% child_fp,
@@ -220,7 +222,6 @@ pub const ExpressionDatabase = struct {
                 const rhs_expr = expr_arena_ref.get(bin.rhs);
                 const lhs_fp = eval_batch(ctx, lhs_expr, expr_arena_ref, batch_idx);
                 const rhs_fp = eval_batch(ctx, rhs_expr, expr_arena_ref, batch_idx);
-
                 return switch (bin.op) {
                     .add => lhs_fp +% rhs_fp,
                     .sub => lhs_fp -% rhs_fp,
@@ -245,7 +246,6 @@ pub const ExpressionDatabase = struct {
                 const cond_fp = eval_batch(ctx, cond_expr, expr_arena_ref, batch_idx);
                 const t_fp = eval_batch(ctx, t_expr, expr_arena_ref, batch_idx);
                 const f_fp = eval_batch(ctx, f_expr, expr_arena_ref, batch_idx);
-
                 const condition_vector = cond_fp != @as(Vector64, @splat(0));
                 return @select(u32, condition_vector, t_fp, f_fp);
             },
@@ -254,7 +254,6 @@ pub const ExpressionDatabase = struct {
 
     pub fn eval_and_hash(ctx: *const EvaluationContext, expr: ast.Expr, expr_arena_ref: *const expr_arena.ExpressionArena) FingerprintHash {
         var hasher = std.hash.Wyhash.init(0);
-
         for (0..ctx.num_batches) |batch_idx| {
             const batch_res = eval_batch(ctx, expr, expr_arena_ref, batch_idx);
             const bytes = std.mem.asBytes(&batch_res);
@@ -263,4 +262,6 @@ pub const ExpressionDatabase = struct {
         return hasher.final();
     }
 };
+
+
 
