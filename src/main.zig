@@ -100,6 +100,11 @@ pub fn main() !void {
 
 
         const res = try verify.verify_classes(&db, iteration, &proven_cache, num_threads);
+                if (config.active.is_perf_mode) {
+            std.debug.print("\n[PERF MODE] Benchmark complete. Exiting.\n", .{});
+            break;
+        }
+        
         if (res.mistakes == 0 and res.timeouts == 0) {
             std.debug.print("\n[SUCCESS] PERFECT CLASSES ACHIEVED!\n", .{});
             break;

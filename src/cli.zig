@@ -20,6 +20,8 @@ pub fn parseArgs(allocator: std.mem.Allocator) !struct { max_cost: usize, thread
             threads = try std.fmt.parseInt(usize, val, 10);
         } else if (std.mem.eql(u8, arg, "--no-select")) {
             config.enable_select = false;
+        } else if (std.mem.eql(u8, arg, "--perf")) {
+            config.is_perf_mode = true;
         } else if (std.mem.eql(u8, arg, "--no-unary")) {
             config.enable_unary = false;
         } else if (std.mem.eql(u8, arg, "--no-prune")) {

@@ -3,6 +3,7 @@ const std = @import("std");
 pub var active: Config = .{};
 
 pub const Config = struct {
+    is_perf_mode: bool = false,
     use_pruning: bool = true,
     enable_unary: bool = true,
     enable_select: bool = true,

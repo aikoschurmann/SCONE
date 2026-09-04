@@ -201,27 +201,7 @@ pub const Z3Result = union(enum) {
     timeout: void,
 };
 
-fn check_class_ctx(allocator: std.mem.Allocator, class_id: u32, head: []const u32, next: []const u32, arena: *const @import("arena.zig").ExpressionArena, proven_cache: *std.AutoHashMap(u64, void), ce_mutex: *std.Thread.Mutex) Z3Result {
-    const z3_cfg = z3.Z3_mk_config();
-    var timeout_buf: [32]u8 = undefined;
-    const timeout_str = std.fmt.bufPrintZ(&timeout_buf, "{d}", .{config.active.z3_timeout_ms}) catch "1000";
-    z3.Z3_set_param_value(z3_cfg, "timeout", timeout_str.ptr);
-    const ctx = z3.Z3_mk_context(z3_cfg);
-    defer {
-        z3.Z3_del_context(ctx);
-        z3.Z3_del_config(z3_cfg);
-    }
-
-    const solver = z3.Z3_mk_solver(ctx);
-    z3.Z3_solver_inc_ref(ctx, solver);
-    defer z3.Z3_solver_dec_ref(ctx, solver);
-
-    const params = z3.Z3_mk_params(ctx);
-    z3.Z3_params_inc_ref(ctx, params);
-    defer z3.Z3_params_dec_ref(ctx, params);
-    const sym_timeout = z3.Z3_mk_string_symbol(ctx, "timeout");
-    z3.Z3_params_set_uint(ctx, params, sym_timeout, config.active.z3_timeout_ms);
-    z3.Z3_solver_set_params(ctx, solver, params);
+fn check_class_ctx(allocator: std.mem.Allocator, ctx: z3.Z3_context, solver: z3.Z3_solver, class_id: u32, head: []const u32, next: []const u32, arena: *const @import("arena.zig").ExpressionArena, proven_cache: *std.AutoHashMap(u64, void), ce_mutex: *std.Thread.Mutex) Z3Result {
 
     const sort = z3.Z3_mk_bv_sort(ctx, 32);
 
@@ -344,11 +324,32 @@ fn verify_worker(
     proven_cache: *std.AutoHashMap(u64, void),
     timeout_classes: *std.ArrayList(u32),
 ) void {
+    const z3_cfg = z3.Z3_mk_config();
+    var timeout_buf: [32]u8 = undefined;
+    const timeout_str = std.fmt.bufPrintZ(&timeout_buf, "{d}", .{config.active.z3_timeout_ms}) catch "1000";
+    z3.Z3_set_param_value(z3_cfg, "timeout", timeout_str.ptr);
+    const ctx = z3.Z3_mk_context(z3_cfg);
+    defer {
+        z3.Z3_del_context(ctx);
+        z3.Z3_del_config(z3_cfg);
+    }
+    const solver = z3.Z3_mk_solver(ctx);
+    z3.Z3_solver_inc_ref(ctx, solver);
+    defer z3.Z3_solver_dec_ref(ctx, solver);
+    
+    const params = z3.Z3_mk_params(ctx);
+    z3.Z3_params_inc_ref(ctx, params);
+    defer z3.Z3_params_dec_ref(ctx, params);
+    const sym_timeout = z3.Z3_mk_string_symbol(ctx, "timeout");
+    z3.Z3_params_set_uint(ctx, params, sym_timeout, config.active.z3_timeout_ms);
+    z3.Z3_solver_set_params(ctx, solver, params);
+
     var idx = start_idx;
     while (idx < end_idx) : (idx += 1) {
         var arena_alloc = std.heap.ArenaAllocator.init(std.heap.page_allocator);
         defer arena_alloc.deinit();
-        const res = check_class_ctx(arena_alloc.allocator(), top_slice[idx].id, head, next, arena, proven_cache, ce_mutex);
+        z3.Z3_solver_reset(ctx, solver);
+        const res = check_class_ctx(arena_alloc.allocator(), ctx, solver, top_slice[idx].id, head, next, arena, proven_cache, ce_mutex);
 
         switch (res) {
             .sat => |ce| {
