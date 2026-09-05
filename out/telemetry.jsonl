@@ -1,3 +1,85 @@
-{"event": "evaluate", "iteration": 1, "cost": 1, "processed_exprs": 6668, "speed_exprs_per_sec": 23233.4, "elapsed_s": 0.29}
-{"event": "evaluate", "iteration": 1, "cost": 1, "processed_exprs": 6668, "speed_exprs_per_sec": 303090.9, "elapsed_s": 0.02}
-{"event": "evaluate", "iteration": 1, "cost": 2, "processed_exprs": 1668330, "speed_exprs_per_sec": 486677.4, "elapsed_s": 3.43}
+{"event": "verify", "elapsed_s": 99.21, "iteration": 1, "classes_verified": 100479, "mistakes_found": 0, "timeouts": 156}
+{"event": "evaluate", "iteration": 1, "cost": 1, "processed_exprs": 6668, "speed_exprs_per_sec": 42202.5, "elapsed_s": 0.16}
+{"event": "evaluate", "iteration": 1, "cost": 2, "processed_exprs": 1668330, "speed_exprs_per_sec": 145046.9, "elapsed_s": 11.50}
+{"event": "metrics", "iteration": 1, "total_ast_nodes": 1675014, "total_classes": 302253, "perfect_classes": 201774, "colliding_classes": 100479, "exprs_in_collisions": 1473240, "eval_grid_size": 7073}
+{"event": "evaluate", "iteration": 1, "cost": 1, "processed_exprs": 6668, "speed_exprs_per_sec": 38994.2, "elapsed_s": 0.17}
+{"event": "verify", "elapsed_s": 103.37, "iteration": 1, "classes_verified": 100479, "mistakes_found": 0, "timeouts": 143}
+{"event": "evaluate", "iteration": 1, "cost": 1, "processed_exprs": 6668, "speed_exprs_per_sec": 42471.3, "elapsed_s": 0.16}
+{"event": "evaluate", "iteration": 1, "cost": 1, "processed_exprs": 6668, "speed_exprs_per_sec": 43298.7, "elapsed_s": 0.15}
+{"event": "evaluate", "iteration": 1, "cost": 2, "processed_exprs": 1668330, "speed_exprs_per_sec": 150394.8, "elapsed_s": 11.09}
+{"event": "metrics", "iteration": 1, "total_ast_nodes": 1675014, "total_classes": 302253, "perfect_classes": 201774, "colliding_classes": 100479, "exprs_in_collisions": 1473240, "eval_grid_size": 7073}
+{"event": "evaluate", "iteration": 1, "cost": 1, "processed_exprs": 6668, "speed_exprs_per_sec": 42471.3, "elapsed_s": 0.16}
+{"event": "evaluate", "iteration": 1, "cost": 2, "processed_exprs": 1724940, "speed_exprs_per_sec": 148945.7, "elapsed_s": 11.58}
+{"event": "metrics", "iteration": 1, "total_ast_nodes": 1731624, "total_classes": 298284, "perfect_classes": 196944, "colliding_classes": 101340, "exprs_in_collisions": 1534680, "eval_grid_size": 7073}
+{"event": "evaluate", "iteration": 1, "cost": 1, "processed_exprs": 6668, "speed_exprs_per_sec": 43298.7, "elapsed_s": 0.15}
+{"event": "metrics", "iteration": 1, "total_ast_nodes": 6684, "total_classes": 1519, "perfect_classes": 1228, "colliding_classes": 291, "exprs_in_collisions": 5456, "eval_grid_size": 7073}
+{"event": "verify", "elapsed_s": 0.09, "iteration": 1, "classes_verified": 291, "mistakes_found": 0, "timeouts": 0}
+{"event": "evaluate", "iteration": 1, "cost": 1, "processed_exprs": 6668, "speed_exprs_per_sec": 43868.4, "elapsed_s": 0.15}
+{"event": "evaluate", "iteration": 1, "cost": 2, "processed_exprs": 1668330, "speed_exprs_per_sec": 168722.7, "elapsed_s": 9.89}
+{"event": "metrics", "iteration": 1, "total_ast_nodes": 1675014, "total_classes": 302253, "perfect_classes": 201774, "colliding_classes": 100479, "exprs_in_collisions": 1473240, "eval_grid_size": 7073}
+{"event": "evaluate", "iteration": 1, "cost": 1, "processed_exprs": 6668, "speed_exprs_per_sec": 10534.0, "elapsed_s": 0.63}
+{"event": "evaluate", "iteration": 1, "cost": 1, "processed_exprs": 6668, "speed_exprs_per_sec": 20902.8, "elapsed_s": 0.32}
+{"event": "evaluate", "iteration": 1, "cost": 1, "processed_exprs": 6668, "speed_exprs_per_sec": 41937.1, "elapsed_s": 0.16}
+{"event": "evaluate", "iteration": 1, "cost": 1, "processed_exprs": 6668, "speed_exprs_per_sec": 43868.4, "elapsed_s": 0.15}
+{"event": "metrics", "iteration": 1, "total_ast_nodes": 6684, "total_classes": 1519, "perfect_classes": 1228, "colliding_classes": 291, "exprs_in_collisions": 5456, "eval_grid_size": 7073}
+{"event": "evaluate", "iteration": 1, "cost": 1, "processed_exprs": 6668, "speed_exprs_per_sec": 36239.1, "elapsed_s": 0.18}
+{"event": "evaluate", "iteration": 1, "cost": 1, "processed_exprs": 6668, "speed_exprs_per_sec": 22680.3, "elapsed_s": 0.29}
+{"event": "evaluate", "iteration": 1, "cost": 1, "processed_exprs": 6668, "speed_exprs_per_sec": 40908.0, "elapsed_s": 0.16}
+{"event": "metrics", "iteration": 1, "total_ast_nodes": 6684, "total_classes": 1519, "perfect_classes": 1228, "colliding_classes": 291, "exprs_in_collisions": 5456, "eval_grid_size": 7073}
+{"event": "evaluate", "iteration": 1, "cost": 1, "processed_exprs": 6668, "speed_exprs_per_sec": 43019.4, "elapsed_s": 0.16}
+{"event": "evaluate", "iteration": 1, "cost": 2, "processed_exprs": 1668330, "speed_exprs_per_sec": 157761.7, "elapsed_s": 10.58}
+{"event": "metrics", "iteration": 1, "total_ast_nodes": 1675014, "total_classes": 302253, "perfect_classes": 201774, "colliding_classes": 100479, "exprs_in_collisions": 1473240, "eval_grid_size": 7073}
+{"event": "evaluate", "iteration": 1, "cost": 1, "processed_exprs": 6668, "speed_exprs_per_sec": 42471.3, "elapsed_s": 0.16}
+{"event": "metrics", "iteration": 1, "total_ast_nodes": 6684, "total_classes": 1519, "perfect_classes": 1228, "colliding_classes": 291, "exprs_in_collisions": 5456, "eval_grid_size": 7073}
+{"event": "evaluate", "iteration": 1, "cost": 1, "processed_exprs": 6668, "speed_exprs_per_sec": 40412.1, "elapsed_s": 0.17}
+{"event": "evaluate", "iteration": 1, "cost": 2, "processed_exprs": 1668330, "speed_exprs_per_sec": 161284.8, "elapsed_s": 10.34}
+{"event": "metrics", "iteration": 1, "total_ast_nodes": 1675014, "total_classes": 302253, "perfect_classes": 201774, "colliding_classes": 100479, "exprs_in_collisions": 1473240, "eval_grid_size": 7073}
+{"event": "evaluate", "iteration": 1, "cost": 1, "processed_exprs": 6668, "speed_exprs_per_sec": 41160.5, "elapsed_s": 0.16}
+{"event": "metrics", "iteration": 1, "total_ast_nodes": 6684, "total_classes": 1519, "perfect_classes": 1228, "colliding_classes": 291, "exprs_in_collisions": 5456, "eval_grid_size": 7073}
+{"event": "evaluate", "iteration": 1, "cost": 1, "processed_exprs": 6668, "speed_exprs_per_sec": 41416.1, "elapsed_s": 0.16}
+{"event": "metrics", "iteration": 1, "total_ast_nodes": 6684, "total_classes": 1519, "perfect_classes": 1228, "colliding_classes": 291, "exprs_in_collisions": 5456, "eval_grid_size": 7073}
+{"event": "evaluate", "iteration": 1, "cost": 1, "processed_exprs": 6668, "speed_exprs_per_sec": 42743.6, "elapsed_s": 0.16}
+{"event": "evaluate", "iteration": 1, "cost": 1, "processed_exprs": 6668, "speed_exprs_per_sec": 41937.1, "elapsed_s": 0.16}
+{"event": "metrics", "iteration": 1, "total_ast_nodes": 6684, "total_classes": 1519, "perfect_classes": 1228, "colliding_classes": 291, "exprs_in_collisions": 5456, "eval_grid_size": 7073}
+{"event": "evaluate", "iteration": 1, "cost": 1, "processed_exprs": 6668, "speed_exprs_per_sec": 43019.4, "elapsed_s": 0.16}
+{"event": "metrics", "iteration": 1, "total_ast_nodes": 6684, "total_classes": 1519, "perfect_classes": 1228, "colliding_classes": 291, "exprs_in_collisions": 5456, "eval_grid_size": 7073}
+{"event": "verify", "elapsed_s": 0.12, "iteration": 1, "classes_verified": 291, "mistakes_found": 0, "timeouts": 0}
+{"event": "evaluate", "iteration": 1, "cost": 1, "processed_exprs": 6668, "speed_exprs_per_sec": 43868.4, "elapsed_s": 0.15}
+{"event": "metrics", "iteration": 1, "total_ast_nodes": 6684, "total_classes": 1519, "perfect_classes": 1228, "colliding_classes": 291, "exprs_in_collisions": 5456, "eval_grid_size": 7073}
+{"event": "verify", "elapsed_s": 0.12, "iteration": 1, "classes_verified": 291, "mistakes_found": 0, "timeouts": 0}
+{"event": "evaluate", "iteration": 1, "cost": 1, "processed_exprs": 6668, "speed_exprs_per_sec": 41937.1, "elapsed_s": 0.16}
+{"event": "metrics", "iteration": 1, "total_ast_nodes": 6684, "total_classes": 1519, "perfect_classes": 1228, "colliding_classes": 291, "exprs_in_collisions": 5456, "eval_grid_size": 7073}
+{"event": "verify", "elapsed_s": 0.12, "iteration": 1, "classes_verified": 291, "mistakes_found": 0, "timeouts": 0}
+{"event": "evaluate", "iteration": 1, "cost": 1, "processed_exprs": 6668, "speed_exprs_per_sec": 42471.3, "elapsed_s": 0.16}
+{"event": "metrics", "iteration": 1, "total_ast_nodes": 6684, "total_classes": 1519, "perfect_classes": 1228, "colliding_classes": 291, "exprs_in_collisions": 5456, "eval_grid_size": 7073}
+{"event": "verify", "elapsed_s": 0.11, "iteration": 1, "classes_verified": 291, "mistakes_found": 0, "timeouts": 0}
+{"event": "evaluate", "iteration": 1, "cost": 1, "processed_exprs": 6668, "speed_exprs_per_sec": 44453.3, "elapsed_s": 0.15}
+{"event": "evaluate", "iteration": 1, "cost": 2, "processed_exprs": 1668330, "speed_exprs_per_sec": 152470.3, "elapsed_s": 10.94}
+{"event": "metrics", "iteration": 1, "total_ast_nodes": 1675014, "total_classes": 302253, "perfect_classes": 201774, "colliding_classes": 100479, "exprs_in_collisions": 1473240, "eval_grid_size": 7073}
+{"event": "evaluate", "iteration": 1, "cost": 1, "processed_exprs": 6668, "speed_exprs_per_sec": 45360.5, "elapsed_s": 0.15}
+{"event": "metrics", "iteration": 1, "total_ast_nodes": 6684, "total_classes": 1519, "perfect_classes": 1228, "colliding_classes": 291, "exprs_in_collisions": 5456, "eval_grid_size": 7073}
+{"event": "verify", "elapsed_s": 0.11, "iteration": 1, "classes_verified": 291, "mistakes_found": 0, "timeouts": 0}
+{"event": "evaluate", "iteration": 1, "cost": 1, "processed_exprs": 6668, "speed_exprs_per_sec": 40168.7, "elapsed_s": 0.17}
+{"event": "metrics", "iteration": 1, "total_ast_nodes": 6684, "total_classes": 1519, "perfect_classes": 1228, "colliding_classes": 291, "exprs_in_collisions": 5456, "eval_grid_size": 7073}
+{"event": "verify", "elapsed_s": 0.10, "iteration": 1, "classes_verified": 291, "mistakes_found": 0, "timeouts": 0}
+{"event": "evaluate", "iteration": 1, "cost": 1, "processed_exprs": 6668, "speed_exprs_per_sec": 43298.7, "elapsed_s": 0.15}
+{"event": "metrics", "iteration": 1, "total_ast_nodes": 6684, "total_classes": 1519, "perfect_classes": 1228, "colliding_classes": 291, "exprs_in_collisions": 5456, "eval_grid_size": 7073}
+{"event": "verify", "elapsed_s": 0.14, "iteration": 1, "classes_verified": 291, "mistakes_found": 0, "timeouts": 0}
+{"event": "evaluate", "iteration": 1, "cost": 1, "processed_exprs": 6668, "speed_exprs_per_sec": 45054.1, "elapsed_s": 0.15}
+{"event": "metrics", "iteration": 1, "total_ast_nodes": 6684, "total_classes": 1519, "perfect_classes": 1228, "colliding_classes": 291, "exprs_in_collisions": 5456, "eval_grid_size": 7073}
+{"event": "verify", "elapsed_s": 0.11, "iteration": 1, "classes_verified": 291, "mistakes_found": 0, "timeouts": 0}
+{"event": "evaluate", "iteration": 1, "cost": 1, "processed_exprs": 6668, "speed_exprs_per_sec": 43019.4, "elapsed_s": 0.16}
+{"event": "metrics", "iteration": 1, "total_ast_nodes": 6684, "total_classes": 1519, "perfect_classes": 1228, "colliding_classes": 291, "exprs_in_collisions": 5456, "eval_grid_size": 7073}
+{"event": "verify", "elapsed_s": 0.11, "iteration": 1, "classes_verified": 291, "mistakes_found": 0, "timeouts": 0}
+{"event": "evaluate", "iteration": 1, "cost": 1, "processed_exprs": 6668, "speed_exprs_per_sec": 43298.7, "elapsed_s": 0.15}
+{"event": "metrics", "iteration": 1, "total_ast_nodes": 6684, "total_classes": 1519, "perfect_classes": 1228, "colliding_classes": 291, "exprs_in_collisions": 5456, "eval_grid_size": 7073}
+{"event": "verify", "elapsed_s": 0.11, "iteration": 1, "classes_verified": 291, "mistakes_found": 0, "timeouts": 0}
+{"event": "evaluate", "iteration": 1, "cost": 1, "processed_exprs": 6668, "speed_exprs_per_sec": 38543.4, "elapsed_s": 0.17}
+{"event": "metrics", "iteration": 1, "total_ast_nodes": 6684, "total_classes": 1519, "perfect_classes": 1228, "colliding_classes": 291, "exprs_in_collisions": 5456, "eval_grid_size": 7073}
+{"event": "verify", "elapsed_s": 0.15, "iteration": 1, "classes_verified": 291, "mistakes_found": 0, "timeouts": 0}
+{"event": "evaluate", "iteration": 1, "cost": 1, "processed_exprs": 6668, "speed_exprs_per_sec": 43019.4, "elapsed_s": 0.16}
+{"event": "metrics", "iteration": 1, "total_ast_nodes": 6684, "total_classes": 1519, "perfect_classes": 1228, "colliding_classes": 291, "exprs_in_collisions": 5456, "eval_grid_size": 7073}
+{"event": "verify", "elapsed_s": 0.14, "iteration": 1, "classes_verified": 291, "mistakes_found": 0, "timeouts": 0}
+{"event": "evaluate", "iteration": 1, "cost": 1, "processed_exprs": 6668, "speed_exprs_per_sec": 42471.3, "elapsed_s": 0.16}
+{"event": "metrics", "iteration": 1, "total_ast_nodes": 6684, "total_classes": 1519, "perfect_classes": 1228, "colliding_classes": 291, "exprs_in_collisions": 5456, "eval_grid_size": 7073}
+{"event": "verify", "elapsed_s": 0.14, "iteration": 1, "classes_verified": 291, "mistakes_found": 0, "timeouts": 0}

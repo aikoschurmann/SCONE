@@ -3,6 +3,7 @@ const std = @import("std");
 
 const ast = @import("ast.zig");
 const eval = @import("eval.zig");
+const export_rules = @import("export.zig");
 const database = @import("database.zig");
 const config = @import("config.zig");
 const cli = @import("cli.zig");
@@ -46,14 +47,15 @@ pub fn main() !void {
         }
 
         std.fs.cwd().makeDir(config.active.out_dir) catch |err| { if (err != error.PathAlreadyExists) return err; };
-        var eval_ctx = try eval.EvaluationContext.init(allocator);
-        defer eval_ctx.deinit();
-
-        var db = try database.ExpressionDatabase.init(allocator, eval_ctx.num_batches);
-        defer db.deinit();
-
-        var enumerator = try enumerate.Enumerator.init(allocator, &db, &eval_ctx);
-        defer enumerator.deinit();
+        
+        var loop_arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+        defer loop_arena.deinit();
+        const loop_allocator = loop_arena.allocator();
+        
+        var eval_ctx = try eval.EvaluationContext.init(loop_allocator);
+        var db = try database.ExpressionDatabase.init(loop_allocator, eval_ctx.num_batches);
+        var enumerator = try enumerate.Enumerator.init(loop_allocator, &db, &eval_ctx);
+        // defer enumerator.deinit();
 
         try enumerator.setup_threads(num_threads);
         try enumerator.seed_cost_0();
@@ -126,6 +128,7 @@ pub fn main() !void {
         
         if (res.mistakes == 0 and res.timeouts == 0) {
             std.debug.print("\n[SUCCESS] PERFECT CLASSES ACHIEVED!\n", .{});
+            try export_rules.export_rewrite_rules(&db);
             break;
         } else if (res.mistakes == 0 and res.timeouts > 0) {
             std.debug.print("\n[WARNING] 0 mistakes, but {d} timeouts remaining. Engine must retry with longer timeout or skip.\n", .{res.timeouts});
