@@ -34,6 +34,21 @@ pub fn build(b: *std.Build) void {
         run_cmd.addArgs(args);
     }
 
+
+    const fuzzer = b.addExecutable(.{
+        .name = "fuzzer",
+        .root_source_file = b.path("src/fuzzer.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    fuzzer.linkLibC();
+    fuzzer.addIncludePath(.{ .cwd_relative = "/opt/homebrew/include" });
+    fuzzer.addLibraryPath(.{ .cwd_relative = "/opt/homebrew/lib" });
+    fuzzer.addIncludePath(.{ .cwd_relative = "/opt/homebrew/Cellar/z3/4.15.4/include" });
+    fuzzer.addLibraryPath(.{ .cwd_relative = "/opt/homebrew/Cellar/z3/4.15.4/lib" });
+    fuzzer.linkSystemLibrary("z3");
+    b.installArtifact(fuzzer);
+
     const run_step = b.step("run", "Run the app");
     run_step.dependOn(&run_cmd.step);
 }
