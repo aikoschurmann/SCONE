@@ -4,7 +4,7 @@ const expr_arena = @import("arena.zig");
 const vector_arena = @import("vector_arena.zig");
 const eval = @import("eval.zig");
 
-pub const FingerprintHash = u64;
+pub const FingerprintHash = u128;
 
 pub const EquivalenceClass = struct {
     hash: FingerprintHash,

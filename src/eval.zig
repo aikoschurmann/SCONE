@@ -72,9 +72,14 @@ pub fn combine_select_into(cond: []const Vector64, t: []const Vector64, f: []con
 }
 
 pub fn hash_vectors(vectors: []const Vector64) database.FingerprintHash {
-    var hasher = std.hash.Wyhash.init(0);
-    hasher.update(std.mem.sliceAsBytes(vectors));
-    return hasher.final();
+    var hasher1 = std.hash.Wyhash.init(0);
+    var hasher2 = std.hash.Wyhash.init(0x1337_CAFE_BABE_BEEF);
+    const bytes = std.mem.sliceAsBytes(vectors);
+    hasher1.update(bytes);
+    hasher2.update(bytes);
+    const h1 = @as(u128, hasher1.final());
+    const h2 = @as(u128, hasher2.final());
+    return (h1 << 64) | h2;
 }
 
 pub const BATCH_SIZE = 64;
@@ -251,11 +256,15 @@ pub fn eval_batch(ctx: *const EvaluationContext, expr: ast.Expr, expr_arena_ref:
     }
 
     pub fn eval_and_hash(ctx: *const EvaluationContext, expr: ast.Expr, expr_arena_ref: *const expr_arena.ExpressionArena) database.FingerprintHash {
-        var hasher = std.hash.Wyhash.init(0);
+        var hasher1 = std.hash.Wyhash.init(0);
+        var hasher2 = std.hash.Wyhash.init(0x1337_CAFE_BABE_BEEF);
         for (0..ctx.num_batches) |batch_idx| {
             const batch_res = eval_batch(ctx, expr, expr_arena_ref, batch_idx);
             const bytes = std.mem.asBytes(&batch_res);
-            hasher.update(bytes);
+            hasher1.update(bytes);
+            hasher2.update(bytes);
         }
-        return hasher.final();
+        const h1 = @as(u128, hasher1.final());
+        const h2 = @as(u128, hasher2.final());
+        return (h1 << 64) | h2;
     }
