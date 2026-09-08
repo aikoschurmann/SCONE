@@ -19,7 +19,12 @@ fn sigintHandler(sig: c_int) callconv(.C) void {
     std.posix.exit(1);
 }
 
+extern "c" fn pthread_set_qos_class_self_np(qos_class: c_int, relative_priority: c_int) c_int;
+
 pub fn main() !void {
+    if (@import("builtin").os.tag == .macos) {
+        _ = pthread_set_qos_class_self_np(0x21, 0); // QOS_CLASS_USER_INTERACTIVE
+    }
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
@@ -35,6 +40,32 @@ pub fn main() !void {
     const max_cost = parsed_args.max_cost;
     const num_threads = if (parsed_args.threads == 0) std.Thread.getCpuCount() catch 4 else parsed_args.threads;
     const verify_mode = true; // Always verify if we are running the CEGIS loop
+
+    // CREATE TIMESTAMPED RUN DIRECTORY
+    std.fs.cwd().makeDir(config.active.out_dir) catch |err| { if (err != error.PathAlreadyExists) return err; };
+    const timestamp = std.time.timestamp();
+    var run_dir_buf: [128]u8 = undefined;
+    const run_dir = try std.fmt.bufPrint(&run_dir_buf, "{s}/run_{d}", .{ config.active.out_dir, timestamp });
+    std.fs.cwd().makeDir(run_dir) catch |err| { if (err != error.PathAlreadyExists) return err; };
+
+    var tel_file_buf: [128]u8 = undefined;
+    const tel_file = try std.fmt.bufPrint(&tel_file_buf, "{s}/telemetry.jsonl", .{ run_dir });
+    
+    var exp_file_buf: [128]u8 = undefined;
+    const exp_file = try std.fmt.bufPrint(&exp_file_buf, "{s}/classes.jsonl", .{ run_dir });
+    
+    // Dump config to config.json
+    var cfg_file_buf: [128]u8 = undefined;
+    const cfg_file_path = try std.fmt.bufPrint(&cfg_file_buf, "{s}/config.json", .{ run_dir });
+    const cfg_file = try std.fs.cwd().createFile(cfg_file_path, .{});
+    defer cfg_file.close();
+    try std.json.stringify(config.active, .{}, cfg_file.writer());
+
+    // Update config paths for this run (except counterexamples which stays global)
+    // Wait, config.active strings are []const u8. We must allocate them to ensure they live long enough.
+    config.active.telemetry_file = try allocator.dupe(u8, tel_file);
+    config.active.verification_export_file = try allocator.dupe(u8, exp_file);
+
     
     var proven_cache = std.AutoHashMap(u64, void).init(allocator);
     defer proven_cache.deinit();

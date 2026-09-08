@@ -33,7 +33,7 @@ pub fn write_expr_json(writer: anytype, expr_id: u32, arena: *const @import("are
 }
 
 pub fn export_rewrite_rules(db: *const database.ExpressionDatabase) !void {
-    const out_path = "out/classes.jsonl";
+    const out_path = config.active.verification_export_file;
     const file = std.fs.cwd().createFile(out_path, .{}) catch |err| {
         std.debug.print("Failed to create export file {s}: {}\n", .{ out_path, err });
         return;
