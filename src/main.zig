@@ -1,4 +1,7 @@
 const std = @import("std");
+const clib = @cImport({
+    @cInclude("time.h");
+});
 
 
 const ast = @import("ast.zig");
@@ -43,9 +46,15 @@ pub fn main() !void {
 
     // CREATE TIMESTAMPED RUN DIRECTORY
     std.fs.cwd().makeDir(config.active.out_dir) catch |err| { if (err != error.PathAlreadyExists) return err; };
-    const timestamp = std.time.timestamp();
+    
+    var time_buf: [64]u8 = undefined;
+    const t = clib.time(null);
+    const tm_info = clib.localtime(&t);
+    _ = clib.strftime(&time_buf, time_buf.len, "%Y-%m-%d_%H-%M-%S", tm_info);
+    const date_str = std.mem.sliceTo(&time_buf, 0);
+    
     var run_dir_buf: [128]u8 = undefined;
-    const run_dir = try std.fmt.bufPrint(&run_dir_buf, "{s}/run_{d}", .{ config.active.out_dir, timestamp });
+    const run_dir = try std.fmt.bufPrint(&run_dir_buf, "{s}/run_{s}", .{ config.active.out_dir, date_str });
     std.fs.cwd().makeDir(run_dir) catch |err| { if (err != error.PathAlreadyExists) return err; };
 
     var tel_file_buf: [128]u8 = undefined;
