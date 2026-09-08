@@ -1,3 +1,4 @@
 /zig-out
 /md
-/.zig-cache/out
+/.zig-cache
+/out
