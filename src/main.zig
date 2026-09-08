@@ -95,7 +95,7 @@ pub fn main() !void {
         var eval_ctx = try eval.EvaluationContext.init(loop_allocator);
         var db = try database.ExpressionDatabase.init(loop_allocator, eval_ctx.num_batches);
         var enumerator = try enumerate.Enumerator.init(loop_allocator, &db, &eval_ctx);
-        // defer enumerator.deinit();
+        // Enumerator memory is tied to loop_arena, no manual deinit needed.
 
         try enumerator.setup_threads(num_threads);
         try enumerator.seed_cost_0();

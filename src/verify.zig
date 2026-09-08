@@ -11,9 +11,9 @@ pub const z3 = @cImport({
 });
 
 pub const CE = struct {
-    x: i32,
-    y: i32,
-    z: i32,
+    x: u32,
+    y: u32,
+    z: u32,
 };
 
 fn mk_clz(ctx: z3.Z3_context, expr: z3.Z3_ast) z3.Z3_ast {
@@ -279,26 +279,26 @@ fn check_class_ctx(allocator: std.mem.Allocator, class_id: u32, head: []const u3
         var y_val: z3.Z3_ast = undefined;
         var z_val: z3.Z3_ast = undefined;
 
-        var cx: i32 = 0;
-        var cy: i32 = 0;
-        var cz: i32 = 0;
+        var cx: u32 = 0;
+        var cy: u32 = 0;
+        var cz: u32 = 0;
 
         if (z3.Z3_model_eval(ctx, model, x, true, &x_val) == true) {
             var val: u64 = 0;
             if (z3.Z3_get_numeral_uint64(ctx, x_val, &val)) {
-                cx = @as(i32, @bitCast(@as(u32, @truncate(val))));
+                cx = @as(u32, @truncate(val));
             }
         }
         if (z3.Z3_model_eval(ctx, model, y, true, &y_val) == true) {
             var val: u64 = 0;
             if (z3.Z3_get_numeral_uint64(ctx, y_val, &val)) {
-                cy = @as(i32, @bitCast(@as(u32, @truncate(val))));
+                cy = @as(u32, @truncate(val));
             }
         }
         if (z3.Z3_model_eval(ctx, model, z, true, &z_val) == true) {
             var val: u64 = 0;
             if (z3.Z3_get_numeral_uint64(ctx, z_val, &val)) {
-                cz = @as(i32, @bitCast(@as(u32, @truncate(val))));
+                cz = @as(u32, @truncate(val));
             }
         }
 

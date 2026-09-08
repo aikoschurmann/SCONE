@@ -20,7 +20,6 @@ pub const Config = struct {
     verification_export_file: []const u8 = "out/classes.txt",
 };
 
-pub const chunk_size = 512;
 pub const q_size = 131072;
 
 pub const core_numbers = [_]u32{ 0, 1, 2, 3, 4, 8, 16, 31, 32 };
