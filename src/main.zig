@@ -69,6 +69,7 @@ pub fn main() !void {
             std.fs.cwd().deleteFile("scone.db") catch |err| {
                 if (err != error.FileNotFound) return err;
             };
+            std.process.exit(0);
         }
         
         var sqlite = try @import("sqlite_db.zig").SqliteDb.init("scone.db");

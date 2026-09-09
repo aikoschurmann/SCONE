@@ -70,7 +70,7 @@ You can constrain the search space to find specific types of rules faster:
   --no-select            Disable ternary select (branching) operations.
   --no-unary             Disable unary operations (not, clz, ctz, popcount).
   --z3-timeout <MS>      Skip proofs that take Z3 longer than <MS> to solve.
-  --clean                Delete scone.db and start a fresh run from Cost 0.\n  --distill-ces          Automatically compress the counterexamples after proving.
+  --clean                Delete scone.db and exit immediately.\n  --distill-ces          Automatically compress the counterexamples after proving.
 ```
 
 ## 🛠️ Resuming Interrupted Runs
