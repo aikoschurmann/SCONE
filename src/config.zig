@@ -5,6 +5,7 @@ pub var active: Config = .{};
 pub const Config = struct {
     is_perf_mode: bool = false,
     distill_ces: bool = false,
+    clean_db: bool = false,
     use_pruning: bool = true,
     enable_unary: bool = true,
     enable_select: bool = true,

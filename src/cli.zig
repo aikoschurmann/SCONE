@@ -22,6 +22,8 @@ pub fn parseArgs(allocator: std.mem.Allocator) !struct { max_cost: usize, thread
             config.enable_select = false;
         } else if (std.mem.eql(u8, arg, "--perf")) {
             config.is_perf_mode = true;
+        } else if (std.mem.eql(u8, arg, "--clean")) {
+            config.clean_db = true;
         } else if (std.mem.eql(u8, arg, "--distill-ces")) {
             config.distill_ces = true;
         } else if (std.mem.eql(u8, arg, "--no-unary")) {

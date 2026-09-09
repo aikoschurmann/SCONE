@@ -64,6 +64,13 @@ pub fn main() !void {
         var eval_ctx = try eval.EvaluationContext.init(loop_allocator);
         var db = try database.ExpressionDatabase.init(loop_allocator, eval_ctx.num_batches);
         
+        if (config.active.clean_db) {
+            std.debug.print("Wiping existing scone.db database (--clean)...\n", .{});
+            std.fs.cwd().deleteFile("scone.db") catch |err| {
+                if (err != error.FileNotFound) return err;
+            };
+        }
+        
         var sqlite = try @import("sqlite_db.zig").SqliteDb.init("scone.db");
         defer sqlite.deinit();
         const start_cost = try sqlite.load_state(&db, &eval_ctx);
