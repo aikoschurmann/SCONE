@@ -12,6 +12,7 @@ pub fn build(b: *std.Build) void {
     });
     exe.linkLibC();
     exe.linkSystemLibrary("z3");
+    exe.linkSystemLibrary("sqlite3");
 
     // Optional user-provided Z3 path
     if (b.option([]const u8, "z3-path", "Path to Z3 installation directory (e.g. /opt/homebrew)")) |z3_path| {

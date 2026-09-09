@@ -95,14 +95,39 @@ pub fn main() !void {
         
         var eval_ctx = try eval.EvaluationContext.init(loop_allocator);
         var db = try database.ExpressionDatabase.init(loop_allocator, eval_ctx.num_batches);
+        
+        var sqlite = try @import("sqlite_db.zig").SqliteDb.init("scone.db");
+        defer sqlite.deinit();
+        const start_cost = try sqlite.load_state(&db, &eval_ctx);
+        
         var enumerator = try enumerate.Enumerator.init(loop_allocator, &db, &eval_ctx);
         // Enumerator memory is tied to loop_arena, no manual deinit needed.
 
         try enumerator.setup_threads(num_threads);
-        try enumerator.seed_cost_0();
+        
+        if (start_cost == 0) {
+            try enumerator.seed_cost_0();
+        } else {
+            enumerator.recompute_worker(0, db.classes.items.len);
+            
+            // Reconstruct exprs_by_cost for the Enumerator
+            try enumerator.exprs_by_cost.append(std.ArrayList(ast.ExprId).init(loop_allocator)); // Cost 0
+            for (1..start_cost + 1) |_| {
+                try enumerator.exprs_by_cost.append(std.ArrayList(ast.ExprId).init(loop_allocator));
+            }
+            
+            for (db.classes.items) |cls| {
+                const expr_id = cls.canonical_expr;
+                // Compute cost dynamically
+                const cost = ast.compute_cost(&db, expr_id);
+                try enumerator.exprs_by_cost.items[cost].append(expr_id);
+            }
+        }
 
         const enum_start = std.time.milliTimestamp();
-        for (1..max_cost + 1) |c| {
+        const actual_start = if (start_cost == 0) 1 else start_cost + 1;
+        std.debug.print("DEBUG: actual_start={}, max_cost={}\n", .{actual_start, max_cost});
+        for (actual_start..max_cost + 1) |c| {
             try enumerator.orchestrate_cost(c, num_threads, iteration);
         }
         const enum_end = std.time.milliTimestamp();
@@ -170,6 +195,9 @@ pub fn main() !void {
         if (res.mistakes == 0 and res.timeouts == 0) {
             std.debug.print("\n[SUCCESS] PERFECT CLASSES ACHIEVED!\n", .{});
             try export_rules.export_rewrite_rules(&db);
+            
+            // Commit final successful state to SQLite
+            try sqlite.save_state(&db, &eval_ctx, max_cost);
             if (config.active.distill_ces) {
                 const killer_samples = try distill.distill_samples(allocator, &db, &eval_ctx, 128);
                 

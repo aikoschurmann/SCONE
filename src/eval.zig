@@ -93,7 +93,7 @@ pub const EvaluationContext = struct {
     total_samples: usize,
     allocator: std.mem.Allocator,
 
-    fn setSample(ctx: *EvaluationContext, idx: usize, x: u32, y: u32, z: u32) void {
+    pub fn setSample(ctx: *EvaluationContext, idx: usize, x: u32, y: u32, z: u32) void {
         const batch_idx = idx / BATCH_SIZE;
         const lane_idx = idx % BATCH_SIZE;
         ctx.x_batches[batch_idx][lane_idx] = x;

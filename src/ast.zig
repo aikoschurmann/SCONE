@@ -55,3 +55,14 @@ pub const Expr = union(enum) {
 };
 
 
+
+pub fn compute_cost(db: anytype, expr_id: ExprId) usize {
+    const expr = db.expr_arena.get(expr_id);
+    switch (expr) {
+        .variable => return 0,
+        .constant => return 0,
+        .unary => |u| return 1 + compute_cost(db, u.expr),
+        .binary => |b| return 1 + compute_cost(db, b.lhs) + compute_cost(db, b.rhs),
+        .select => |s| return 1 + compute_cost(db, s.cond) + compute_cost(db, s.true_val) + compute_cost(db, s.false_val),
+    }
+}
