@@ -14,10 +14,7 @@ pub const Config = struct {
     max_classes_to_verify: usize = 500_000,
     max_counterexamples_per_iter: usize = 5000,
     z3_timeout_ms: u32 = 1000,
-    
-    out_dir: []const u8 = "out",
     counterexamples_file: []const u8 = "out/counterexamples.txt",
-    telemetry_file: []const u8 = "out/telemetry.jsonl",
     verification_export_file: []const u8 = "out/classes.txt",
 };
 

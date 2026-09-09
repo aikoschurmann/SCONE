@@ -7,11 +7,9 @@ const clib = @cImport({
 const ast = @import("ast.zig");
 const eval = @import("eval.zig");
 const distill = @import("distill.zig");
-const export_rules = @import("export.zig");
 const database = @import("database.zig");
 const config = @import("config.zig");
 const cli = @import("cli.zig");
-const telemetry = @import("telemetry.zig");
 const verify = @import("verify.zig");
 const enumerate = @import("enumerate.zig");
 
@@ -44,9 +42,6 @@ pub fn main() !void {
     const max_cost = parsed_args.max_cost;
     const num_threads = if (parsed_args.threads == 0) std.Thread.getCpuCount() catch 4 else parsed_args.threads;
     const verify_mode = true; // Always verify if we are running the CEGIS loop
-
-    // CREATE TIMESTAMPED RUN DIRECTORY
-    std.fs.cwd().makeDir(config.active.out_dir) catch |err| { if (err != error.PathAlreadyExists) return err; };
     
     // Output files disabled: SCONE is now entirely backed by SQLite (scone.db).
 
@@ -61,8 +56,7 @@ pub fn main() !void {
             std.debug.print("======================================\n", .{});
         }
 
-        std.fs.cwd().makeDir(config.active.out_dir) catch |err| { if (err != error.PathAlreadyExists) return err; };
-        
+
         var loop_arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
         defer loop_arena.deinit();
         const loop_allocator = loop_arena.allocator();
@@ -102,7 +96,7 @@ pub fn main() !void {
         const actual_start = if (start_cost == 0) 1 else start_cost + 1;
         std.debug.print("DEBUG: actual_start={}, max_cost={}\n", .{actual_start, max_cost});
         for (actual_start..max_cost + 1) |c| {
-            try enumerator.orchestrate_cost(c, num_threads, iteration);
+            try enumerator.orchestrate_cost(c, num_threads);
         }
         const enum_end = std.time.milliTimestamp();
         const enum_elapsed_s = @as(f64, @floatFromInt(enum_end - enum_start)) / 1000.0;
@@ -145,7 +139,7 @@ pub fn main() !void {
 
 
         const verify_start = std.time.milliTimestamp();
-        const res = try verify.verify_classes(&db, iteration, &proven_cache, num_threads);
+        const res = try verify.verify_classes(&db, &proven_cache, num_threads);
         const verify_end = std.time.milliTimestamp();
         const verify_elapsed_s = @as(f64, @floatFromInt(verify_end - verify_start)) / 1000.0;
         _ = if (verify_elapsed_s > 0) @as(f64, @floatFromInt(colliding_classes)) / verify_elapsed_s else 0;

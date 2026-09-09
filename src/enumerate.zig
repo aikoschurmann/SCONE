@@ -7,7 +7,6 @@ var time_ring_pop: u64 = 0;
 const ast = @import("ast.zig");
 const eval = @import("eval.zig");
 const database = @import("database.zig");
-const telemetry = @import("telemetry.zig");
 const config = @import("config.zig");
 const prune = @import("prune.zig");
 
@@ -355,7 +354,7 @@ pub const Enumerator = struct {
         status.store(true, .release);
     }
 
-    pub fn orchestrate_cost(self: *Enumerator, k: usize, num_threads: usize, iteration: usize) !void {
+    pub fn orchestrate_cost(self: *Enumerator, k: usize, num_threads: usize) !void {
         const start_class_id = self.db.classes.items.len;
         try self.prepare_jobs_for_cost(k);
         var cost_list = std.ArrayList(ast.ExprId).init(self.allocator);
@@ -425,10 +424,6 @@ pub const Enumerator = struct {
         const total_elapsed_s = @as(f64, @floatFromInt(final_now - start_time)) / 1000.0;
         const final_speed = if (total_elapsed_s > 0) @as(f64, @floatFromInt(exprs_processed)) / total_elapsed_s else 0.0;
         std.debug.print("\rCost {d}: Processed {d} exprs ({d} unique) | {d:.1} expr/s | elapsed: {d:.1}s - DONE.   \n", .{k, exprs_processed, self.db.classes.items.len, final_speed, total_elapsed_s});
-        
-        var tel = try telemetry.Telemetry.init(config.active.telemetry_file);
-        try tel.logEvaluate(iteration, k, exprs_processed, final_speed, total_elapsed_s);
-        tel.deinit();
 
         for (0..num_threads) |w| {
             threads[w].join();

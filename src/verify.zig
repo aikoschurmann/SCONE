@@ -2,7 +2,6 @@ const std = @import("std");
 const ast = @import("ast.zig");
 const eval_mod = @import("eval.zig");
 const database = @import("database.zig");
-const telemetry = @import("telemetry.zig");
 const config = @import("config.zig");
 const builtin = @import("builtin");
 
@@ -389,7 +388,7 @@ fn verify_worker(
 }
 
 pub const VerifyResult = struct { mistakes: usize, timeouts: usize };
-pub fn verify_classes(db: *database.ExpressionDatabase, iteration: usize, proven_cache: *std.AutoHashMap(u64, void), num_threads: usize) !VerifyResult {
+pub fn verify_classes(db: *database.ExpressionDatabase, proven_cache: *std.AutoHashMap(u64, void), num_threads: usize) !VerifyResult {
     var timer = try std.time.Timer.start();
 
     // Use a buffered writer for MASSIVE IO speedup
@@ -497,11 +496,6 @@ pub fn verify_classes(db: *database.ExpressionDatabase, iteration: usize, proven
 
     const elapsed_s = @as(f64, @floatFromInt(timer.read())) / std.time.ns_per_s;
     std.debug.print("\nZ3 Verification complete in {d:.2}s. Raw CEs: {}, Unique CEs added: {}\n", .{ elapsed_s, mistakes, unique_count });
-
-    // Log telemetry JSON
-    var tel = try telemetry.Telemetry.init(config.active.telemetry_file);
-    try tel.logVerify(elapsed_s, iteration, top_slice.len, mistakes, timeouts);
-    tel.deinit();
 
     if (timeout_classes.items.len > 0) {
         const tf = std.fs.cwd().createFile("out/timeouts.txt", .{}) catch null;
