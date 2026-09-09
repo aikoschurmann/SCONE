@@ -49,6 +49,37 @@ pub fn build(b: *std.Build) void {
     fuzzer.linkSystemLibrary("z3");
     b.installArtifact(fuzzer);
 
+
+    const test_adaptive = b.addExecutable(.{
+        .name = "test_adaptive",
+        .root_source_file = b.path("src/test_adaptive.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    test_adaptive.linkLibC();
+    test_adaptive.addIncludePath(.{ .cwd_relative = "/opt/homebrew/include" });
+    test_adaptive.addLibraryPath(.{ .cwd_relative = "/opt/homebrew/lib" });
+    test_adaptive.addIncludePath(.{ .cwd_relative = "/opt/homebrew/Cellar/z3/4.15.4/include" });
+    test_adaptive.addLibraryPath(.{ .cwd_relative = "/opt/homebrew/Cellar/z3/4.15.4/lib" });
+    test_adaptive.linkSystemLibrary("z3");
+    b.installArtifact(test_adaptive);
+
+
+    const test_redundancy_fast = b.addExecutable(.{
+        .name = "test_redundancy_fast",
+        .root_source_file = b.path("src/test_redundancy_fast.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    test_redundancy_fast.linkLibC();
+    test_redundancy_fast.addIncludePath(.{ .cwd_relative = "/opt/homebrew/include" });
+    test_redundancy_fast.addLibraryPath(.{ .cwd_relative = "/opt/homebrew/lib" });
+    test_redundancy_fast.addIncludePath(.{ .cwd_relative = "/opt/homebrew/Cellar/z3/4.15.4/include" });
+    test_redundancy_fast.addLibraryPath(.{ .cwd_relative = "/opt/homebrew/Cellar/z3/4.15.4/lib" });
+    test_redundancy_fast.linkSystemLibrary("z3");
+    b.installArtifact(test_redundancy_fast);
+
     const run_step = b.step("run", "Run the app");
     run_step.dependOn(&run_cmd.step);
 }
+

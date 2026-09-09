@@ -6,6 +6,7 @@ const clib = @cImport({
 
 const ast = @import("ast.zig");
 const eval = @import("eval.zig");
+const distill = @import("distill.zig");
 const export_rules = @import("export.zig");
 const database = @import("database.zig");
 const config = @import("config.zig");
@@ -169,6 +170,26 @@ pub fn main() !void {
         if (res.mistakes == 0 and res.timeouts == 0) {
             std.debug.print("\n[SUCCESS] PERFECT CLASSES ACHIEVED!\n", .{});
             try export_rules.export_rewrite_rules(&db);
+            if (config.active.distill_ces) {
+                const killer_samples = try distill.distill_samples(allocator, &db, &eval_ctx, 128);
+                
+                var distill_file_buf: [128]u8 = undefined;
+                const distill_file_path = try std.fmt.bufPrint(&distill_file_buf, "{s}/killer_samples.txt", .{ run_dir });
+                var distill_file = try std.fs.cwd().createFile(distill_file_path, .{});
+                defer distill_file.close();
+                var writer = distill_file.writer();
+                for (killer_samples) |idx| {
+                    const batch = idx / eval.BATCH_SIZE;
+                    const lane = idx % eval.BATCH_SIZE;
+                    try writer.print("Sample Index {d}: x={d}, y={d}, z={d}\n", .{
+                        idx,
+                        eval_ctx.x_batches[batch][lane],
+                        eval_ctx.y_batches[batch][lane],
+                        eval_ctx.z_batches[batch][lane],
+                    });
+                }
+                std.debug.print("Exported {} killer samples to killer_samples.txt\n", .{killer_samples.len});
+            }
             break;
         } else if (res.mistakes == 0 and res.timeouts > 0) {
             std.debug.print("\n[WARNING] 0 mistakes, but {d} timeouts remaining. Engine must retry with longer timeout or skip.\n", .{res.timeouts});
