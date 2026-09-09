@@ -48,33 +48,7 @@ pub fn main() !void {
     // CREATE TIMESTAMPED RUN DIRECTORY
     std.fs.cwd().makeDir(config.active.out_dir) catch |err| { if (err != error.PathAlreadyExists) return err; };
     
-    var time_buf: [64]u8 = undefined;
-    const t = clib.time(null);
-    const tm_info = clib.localtime(&t);
-    _ = clib.strftime(&time_buf, time_buf.len, "%Y-%m-%d_%H-%M-%S", tm_info);
-    const date_str = std.mem.sliceTo(&time_buf, 0);
-    
-    var run_dir_buf: [128]u8 = undefined;
-    const run_dir = try std.fmt.bufPrint(&run_dir_buf, "{s}/run_{s}", .{ config.active.out_dir, date_str });
-    std.fs.cwd().makeDir(run_dir) catch |err| { if (err != error.PathAlreadyExists) return err; };
-
-    var tel_file_buf: [128]u8 = undefined;
-    const tel_file = try std.fmt.bufPrint(&tel_file_buf, "{s}/telemetry.jsonl", .{ run_dir });
-    
-    var exp_file_buf: [128]u8 = undefined;
-    const exp_file = try std.fmt.bufPrint(&exp_file_buf, "{s}/classes.jsonl", .{ run_dir });
-    
-    // Dump config to config.json
-    var cfg_file_buf: [128]u8 = undefined;
-    const cfg_file_path = try std.fmt.bufPrint(&cfg_file_buf, "{s}/config.json", .{ run_dir });
-    const cfg_file = try std.fs.cwd().createFile(cfg_file_path, .{});
-    defer cfg_file.close();
-    try std.json.stringify(config.active, .{}, cfg_file.writer());
-
-    // Update config paths for this run (except counterexamples which stays global)
-    // Wait, config.active strings are []const u8. We must allocate them to ensure they live long enough.
-    config.active.telemetry_file = try allocator.dupe(u8, tel_file);
-    config.active.verification_export_file = try allocator.dupe(u8, exp_file);
+    // Output files disabled: SCONE is now entirely backed by SQLite (scone.db).
 
     
     var proven_cache = std.AutoHashMap(u64, void).init(allocator);
@@ -165,9 +139,7 @@ pub fn main() !void {
         std.debug.print("Active Evaluation Grid Size:    {}\n", .{eval_ctx.total_samples});
         std.debug.print("---------------------\n\n", .{});
         
-        var tel = try telemetry.Telemetry.init(config.active.telemetry_file);
-        try tel.logMetrics(iteration, db.expr_arena.len, db.classes.items.len, perfect_classes, colliding_classes, trapped_exprs, eval_ctx.total_samples);
-        tel.deinit();
+
 
         if (!verify_mode) break;
 
@@ -194,16 +166,14 @@ pub fn main() !void {
         
         if (res.mistakes == 0 and res.timeouts == 0) {
             std.debug.print("\n[SUCCESS] PERFECT CLASSES ACHIEVED!\n", .{});
-            try export_rules.export_rewrite_rules(&db);
+            // Rules are now saved dynamically into SQLite via save_state
             
             // Commit final successful state to SQLite
             try sqlite.save_state(&db, &eval_ctx, max_cost);
             if (config.active.distill_ces) {
                 const killer_samples = try distill.distill_samples(allocator, &db, &eval_ctx, 128);
                 
-                var distill_file_buf: [128]u8 = undefined;
-                const distill_file_path = try std.fmt.bufPrint(&distill_file_buf, "{s}/killer_samples.txt", .{ run_dir });
-                var distill_file = try std.fs.cwd().createFile(distill_file_path, .{});
+                var distill_file = try std.fs.cwd().createFile("killer_samples.txt", .{});
                 defer distill_file.close();
                 var writer = distill_file.writer();
                 for (killer_samples) |idx| {

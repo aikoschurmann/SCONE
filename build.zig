@@ -82,5 +82,19 @@ pub fn build(b: *std.Build) void {
 
     const run_step = b.step("run", "Run the app");
     run_step.dependOn(&run_cmd.step);
-}
 
+    const compress_tool = b.addExecutable(.{
+        .name = "compress_db",
+        .root_source_file = b.path("src/compress_cli.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    compress_tool.linkLibC();
+    compress_tool.addIncludePath(.{ .cwd_relative = "/opt/homebrew/include" });
+    compress_tool.addLibraryPath(.{ .cwd_relative = "/opt/homebrew/lib" });
+    compress_tool.addIncludePath(.{ .cwd_relative = "/opt/homebrew/Cellar/z3/4.15.4/include" });
+    compress_tool.addLibraryPath(.{ .cwd_relative = "/opt/homebrew/Cellar/z3/4.15.4/lib" });
+    compress_tool.linkSystemLibrary("z3");
+    compress_tool.linkSystemLibrary("sqlite3");
+    b.installArtifact(compress_tool);
+}
