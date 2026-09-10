@@ -1,3 +1,4 @@
+const sqlite_db = @import("sqlite_db.zig");
 const database = @import("database.zig");
 const std = @import("std");
 const ast = @import("ast.zig");
@@ -107,18 +108,12 @@ pub const EvaluationContext = struct {
         self.allocator.free(self.z_batches);
     }
 
-    pub fn init(allocator: std.mem.Allocator) !EvaluationContext {
+    pub fn init(allocator: std.mem.Allocator, sqlite: ?*const sqlite_db.SqliteDb) !EvaluationContext {
         // Calculate dynamic capacity based on file size + padding
         var ce_count: usize = 0;
-        if (std.fs.cwd().openFile(config.active.counterexamples_file, .{})) |f| {
-            var buf_reader = std.io.bufferedReader(f.reader());
-            var stream = buf_reader.reader();
-            var buf: [1024]u8 = undefined;
-            while (stream.readUntilDelimiterOrEof(&buf, '\n') catch null) |line| {
-                if (line.len > 0) ce_count += 1;
-            }
-            f.close();
-        } else |_| {}
+        if (sqlite) |db| {
+            ce_count = db.get_ce_count();
+        }
         
         const total_samples = (if (config.active.use_cartesian_grid) config.num_edge_cases * config.num_edge_cases * config.num_edge_cases else 0) + ce_count + config.active.num_random_samples;
         const num_batches = (total_samples + BATCH_SIZE - 1) / BATCH_SIZE;

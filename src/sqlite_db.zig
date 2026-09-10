@@ -156,7 +156,70 @@ pub const SqliteDb = struct {
         std.debug.print("SQLite save complete!\n", .{});
     }
     
-    pub fn load_state(self: *const SqliteDb, db_scone: *database.ExpressionDatabase, eval_ctx: *eval.EvaluationContext) !usize {
+    
+    pub fn get_ce_count(self: *const SqliteDb) usize {
+        var stmt: ?*c.sqlite3_stmt = null;
+        var count: usize = 0;
+        if (c.sqlite3_prepare_v2(self.db, "SELECT COUNT(*) FROM counterexamples;", -1, &stmt, null) == c.SQLITE_OK) {
+            if (c.sqlite3_step(stmt) == c.SQLITE_ROW) {
+                count = @intCast(c.sqlite3_column_int64(stmt, 0));
+            }
+        }
+        _ = c.sqlite3_finalize(stmt);
+        return count;
+    }
+    
+    pub fn load_ces(self: *const SqliteDb, eval_ctx: anytype) usize {
+        var stmt: ?*c.sqlite3_stmt = null;
+        _ = c.sqlite3_prepare_v2(self.db, "SELECT x, y, z FROM counterexamples ORDER BY id ASC;", -1, &stmt, null);
+        var ce_idx: usize = 0;
+        while (c.sqlite3_step(stmt) == c.SQLITE_ROW) {
+            eval_ctx.setSample(
+                ce_idx,
+                @intCast(c.sqlite3_column_int64(stmt, 0)),
+                @intCast(c.sqlite3_column_int64(stmt, 1)),
+                @intCast(c.sqlite3_column_int64(stmt, 2))
+            );
+            ce_idx += 1;
+        }
+        _ = c.sqlite3_finalize(stmt);
+        return ce_idx;
+    }
+    
+    pub fn append_ce(self: *SqliteDb, x: i64, y: i64, z: i64) !void {
+        var stmt: ?*c.sqlite3_stmt = null;
+        _ = c.sqlite3_prepare_v2(self.db, "INSERT INTO counterexamples (x, y, z) VALUES (?, ?, ?);", -1, &stmt, null);
+        _ = c.sqlite3_bind_int64(stmt, 1, x);
+        _ = c.sqlite3_bind_int64(stmt, 2, y);
+        _ = c.sqlite3_bind_int64(stmt, 3, z);
+        _ = c.sqlite3_step(stmt);
+        _ = c.sqlite3_finalize(stmt);
+    }
+    
+    pub fn replace_ces(self: *SqliteDb, ce_indices: []const usize, eval_ctx: *const eval.EvaluationContext) !void {
+        _ = c.sqlite3_exec(self.db, "DELETE FROM counterexamples;", null, null, null);
+        try self.begin();
+        var stmt: ?*c.sqlite3_stmt = null;
+        _ = c.sqlite3_prepare_v2(self.db, "INSERT INTO counterexamples (id, x, y, z) VALUES (?, ?, ?, ?);", -1, &stmt, null);
+        for (ce_indices, 0..) |idx, i| {
+            const batch = idx / eval.BATCH_SIZE;
+            const lane = idx % eval.BATCH_SIZE;
+            const x = @as(i32, @bitCast(@as(u32, @truncate(eval_ctx.x_batches[batch][lane]))));
+            const y = @as(i32, @bitCast(@as(u32, @truncate(eval_ctx.y_batches[batch][lane]))));
+            const z = @as(i32, @bitCast(@as(u32, @truncate(eval_ctx.z_batches[batch][lane]))));
+            
+            _ = c.sqlite3_reset(stmt);
+            _ = c.sqlite3_bind_int64(stmt, 1, @intCast(i));
+            _ = c.sqlite3_bind_int64(stmt, 2, x);
+            _ = c.sqlite3_bind_int64(stmt, 3, y);
+            _ = c.sqlite3_bind_int64(stmt, 4, z);
+            _ = c.sqlite3_step(stmt);
+        }
+        _ = c.sqlite3_finalize(stmt);
+        try self.commit();
+    }
+
+    pub fn load_state(self: *const SqliteDb, db_scone: *database.ExpressionDatabase) !usize {
         var stmt_meta: ?*c.sqlite3_stmt = null;
         var max_cost: usize = 0;
         if (c.sqlite3_prepare_v2(self.db, "SELECT value FROM meta WHERE key = 'max_cost';", -1, &stmt_meta, null) == c.SQLITE_OK) {
@@ -170,21 +233,7 @@ pub const SqliteDb = struct {
         
         std.debug.print("Found existing SQLite state! Resuming from Cost {}...\n", .{max_cost + 1});
         
-        // Load Counterexamples
-        var stmt_ce: ?*c.sqlite3_stmt = null;
-        _ = c.sqlite3_prepare_v2(self.db, "SELECT x, y, z FROM counterexamples ORDER BY id ASC;", -1, &stmt_ce, null);
-        var ce_idx: usize = 0;
-        while (c.sqlite3_step(stmt_ce) == c.SQLITE_ROW) {
-            eval_ctx.setSample(
-                ce_idx,
-                @intCast(c.sqlite3_column_int64(stmt_ce, 0)),
-                @intCast(c.sqlite3_column_int64(stmt_ce, 1)),
-                @intCast(c.sqlite3_column_int64(stmt_ce, 2))
-            );
-            ce_idx += 1;
-        }
-        _ = c.sqlite3_finalize(stmt_ce);
-        eval_ctx.total_samples = ce_idx;
+
         
         // Load Expressions
         var stmt_expr: ?*c.sqlite3_stmt = null;

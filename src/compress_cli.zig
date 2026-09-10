@@ -11,12 +11,12 @@ pub fn main() !void {
     defer arena.deinit();
     const allocator = arena.allocator();
 
-    var eval_ctx = try eval.EvaluationContext.init(allocator);
-    var db = try database.ExpressionDatabase.init(allocator, eval_ctx.num_batches);
     var sqlite = try sqlite_db.SqliteDb.init("scone.db");
     defer sqlite.deinit();
+    var eval_ctx = try eval.EvaluationContext.init(allocator, &sqlite);
+    var db = try database.ExpressionDatabase.init(allocator, eval_ctx.num_batches);
 
-    const max_cost = try sqlite.load_state(&db, &eval_ctx);
+    const max_cost = try sqlite.load_state(&db);
     if (max_cost == 0) {
         std.debug.print("No database found!\n", .{});
         return;
@@ -30,6 +30,6 @@ pub fn main() !void {
     
     const max_picks = 128;
     const killer_samples = try distill.distill_samples(allocator, &db, &eval_ctx, max_picks);
-    
-    std.debug.print("\nDistillation Complete. Exported {} Killer Samples!\n", .{killer_samples.len});
+    try sqlite.replace_ces(killer_samples, &eval_ctx);
+    std.debug.print("\nDistillation Complete. Saved {} Killer Samples to scone.db!\n", .{killer_samples.len});
 }

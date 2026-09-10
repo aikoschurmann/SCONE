@@ -57,13 +57,6 @@ pub fn main() !void {
         }
 
 
-        var loop_arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-        defer loop_arena.deinit();
-        const loop_allocator = loop_arena.allocator();
-        
-        var eval_ctx = try eval.EvaluationContext.init(loop_allocator);
-        var db = try database.ExpressionDatabase.init(loop_allocator, eval_ctx.num_batches);
-        
         if (config.active.clean_db) {
             std.debug.print("Wiping existing scone.db database (--clean)...\n", .{});
             std.fs.cwd().deleteFile("scone.db") catch |err| {
@@ -74,7 +67,15 @@ pub fn main() !void {
         
         var sqlite = try @import("sqlite_db.zig").SqliteDb.init("scone.db");
         defer sqlite.deinit();
-        const start_cost = try sqlite.load_state(&db, &eval_ctx);
+
+        var loop_arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+        defer loop_arena.deinit();
+        const loop_allocator = loop_arena.allocator();
+        
+        var eval_ctx = try eval.EvaluationContext.init(loop_allocator, &sqlite);
+        var db = try database.ExpressionDatabase.init(loop_allocator, eval_ctx.num_batches);
+        
+        const start_cost = try sqlite.load_state(&db);
         
         var enumerator = try enumerate.Enumerator.init(loop_allocator, &db, &eval_ctx);
         // Enumerator memory is tied to loop_arena, no manual deinit needed.
@@ -147,7 +148,7 @@ pub fn main() !void {
 
 
         const verify_start = std.time.milliTimestamp();
-        const res = try verify.verify_classes(&db, &proven_cache, num_threads);
+        const res = try verify.verify_classes(&db, &sqlite, &proven_cache, num_threads);
         const verify_end = std.time.milliTimestamp();
         const verify_elapsed_s = @as(f64, @floatFromInt(verify_end - verify_start)) / 1000.0;
         _ = if (verify_elapsed_s > 0) @as(f64, @floatFromInt(colliding_classes)) / verify_elapsed_s else 0;
@@ -174,21 +175,8 @@ pub fn main() !void {
             try sqlite.save_state(&db, &eval_ctx, max_cost);
             if (config.active.distill_ces) {
                 const killer_samples = try distill.distill_samples(allocator, &db, &eval_ctx, 128);
-                
-                var distill_file = try std.fs.cwd().createFile("killer_samples.txt", .{});
-                defer distill_file.close();
-                var writer = distill_file.writer();
-                for (killer_samples) |idx| {
-                    const batch = idx / eval.BATCH_SIZE;
-                    const lane = idx % eval.BATCH_SIZE;
-                    try writer.print("Sample Index {d}: x={d}, y={d}, z={d}\n", .{
-                        idx,
-                        eval_ctx.x_batches[batch][lane],
-                        eval_ctx.y_batches[batch][lane],
-                        eval_ctx.z_batches[batch][lane],
-                    });
-                }
-                std.debug.print("Exported {} killer samples to killer_samples.txt\n", .{killer_samples.len});
+                try sqlite.replace_ces(killer_samples, &eval_ctx);
+                std.debug.print("Exported {} killer samples to SQLite!\n", .{killer_samples.len});
             }
             break;
         } else if (res.mistakes == 0 and res.timeouts > 0) {

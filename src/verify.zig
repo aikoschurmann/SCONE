@@ -388,7 +388,8 @@ fn verify_worker(
 }
 
 pub const VerifyResult = struct { mistakes: usize, timeouts: usize };
-pub fn verify_classes(db: *database.ExpressionDatabase, proven_cache: *std.AutoHashMap(u64, void), num_threads: usize) !VerifyResult {
+const sqlite_db = @import("sqlite_db.zig");
+pub fn verify_classes(db: *database.ExpressionDatabase, sqlite: *sqlite_db.SqliteDb, proven_cache: *std.AutoHashMap(u64, void), num_threads: usize) !VerifyResult {
     var timer = try std.time.Timer.start();
 
     // Use a buffered writer for MASSIVE IO speedup
@@ -438,13 +439,7 @@ pub fn verify_classes(db: *database.ExpressionDatabase, proven_cache: *std.AutoH
     const random = prng.random();
     random.shuffle(CollidingClass, top_slice);
 
-    const ce_file = std.fs.cwd().openFile(config.active.counterexamples_file, .{ .mode = .read_write }) catch |err| switch (err) {
-        error.FileNotFound => try std.fs.cwd().createFile(config.active.counterexamples_file, .{}),
-        else => return err,
-    };
-    defer ce_file.close();
-    try ce_file.seekFromEnd(0);
-    const ce_writer = ce_file.writer();
+
 
     var pool: std.Thread.Pool = undefined;
     try pool.init(.{ .allocator = std.heap.page_allocator });
@@ -485,7 +480,7 @@ pub fn verify_classes(db: *database.ExpressionDatabase, proven_cache: *std.AutoH
     var unique_count: usize = 0;
     var ce_it = unique_ces.keyIterator();
     while (ce_it.next()) |ce| {
-        try ce_writer.print("{},{},{}\n", .{ ce.x, ce.y, ce.z });
+        try sqlite.append_ce(ce.x, ce.y, ce.z);
         unique_count += 1;
         if (unique_count >= config.active.max_counterexamples_per_iter) break;
     }
@@ -498,7 +493,7 @@ pub fn verify_classes(db: *database.ExpressionDatabase, proven_cache: *std.AutoH
     std.debug.print("\nZ3 Verification complete in {d:.2}s. Raw CEs: {}, Unique CEs added: {}\n", .{ elapsed_s, mistakes, unique_count });
 
     if (timeout_classes.items.len > 0) {
-        const tf = std.fs.cwd().createFile("out/timeouts.txt", .{}) catch null;
+        const tf = std.fs.cwd().createFile("timeouts.txt", .{}) catch null;
         if (tf) |file| {
             defer file.close();
             for (timeout_classes.items) |cid| {
