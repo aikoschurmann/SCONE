@@ -11,7 +11,6 @@ pub const Config = struct {
     enable_select: bool = true,
     use_cartesian_grid: bool = false,
     num_random_samples: usize = 4096,
-    max_classes_to_export: usize = 50_000,
     max_classes_to_verify: usize = 500_000,
     max_counterexamples_per_iter: usize = 5000,
     z3_timeout_ms: u32 = 1000,

@@ -54,8 +54,6 @@ pub const Expr = union(enum) {
     select: struct { cond: ExprId, true_val: ExprId, false_val: ExprId },
 };
 
-
-
 pub fn compute_cost(db: anytype, expr_id: ExprId) usize {
     const expr = db.expr_arena.get(expr_id);
     switch (expr) {

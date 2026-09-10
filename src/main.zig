@@ -3,7 +3,6 @@ const clib = @cImport({
     @cInclude("time.h");
 });
 
-
 const ast = @import("ast.zig");
 const eval = @import("eval.zig");
 const distill = @import("distill.zig");
@@ -12,7 +11,6 @@ const config = @import("config.zig");
 const cli = @import("cli.zig");
 const verify = @import("verify.zig");
 const enumerate = @import("enumerate.zig");
-
 
 fn sigintHandler(sig: c_int) callconv(.C) void {
     _ = sig;
@@ -30,7 +28,7 @@ pub fn main() !void {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
-    
+
     var act = std.posix.Sigaction{
         .handler = .{ .handler = sigintHandler },
         .mask = std.posix.empty_sigset,
@@ -42,10 +40,9 @@ pub fn main() !void {
     const max_cost = parsed_args.max_cost;
     const num_threads = if (parsed_args.threads == 0) std.Thread.getCpuCount() catch 4 else parsed_args.threads;
     const verify_mode = true; // Always verify if we are running the CEGIS loop
-    
+
     // Output files disabled: SCONE is now entirely backed by SQLite (scone.db).
 
-    
     var proven_cache = std.AutoHashMap(u64, void).init(allocator);
     defer proven_cache.deinit();
     var iteration: usize = 1;
@@ -56,7 +53,6 @@ pub fn main() !void {
             std.debug.print("======================================\n", .{});
         }
 
-
         if (config.active.clean_db) {
             std.debug.print("Wiping existing scone.db database (--clean)...\n", .{});
             std.fs.cwd().deleteFile("scone.db") catch |err| {
@@ -64,35 +60,35 @@ pub fn main() !void {
             };
             std.process.exit(0);
         }
-        
+
         var sqlite = try @import("sqlite_db.zig").SqliteDb.init("scone.db");
         defer sqlite.deinit();
 
         var loop_arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
         defer loop_arena.deinit();
         const loop_allocator = loop_arena.allocator();
-        
+
         var eval_ctx = try eval.EvaluationContext.init(loop_allocator, &sqlite);
         var db = try database.ExpressionDatabase.init(loop_allocator, eval_ctx.num_batches);
-        
+
         const start_cost = try sqlite.load_state(&db);
-        
+
         var enumerator = try enumerate.Enumerator.init(loop_allocator, &db, &eval_ctx);
         // Enumerator memory is tied to loop_arena, no manual deinit needed.
 
         try enumerator.setup_threads(num_threads);
-        
+
         if (start_cost == 0) {
             try enumerator.seed_cost_0();
         } else {
             enumerator.recompute_worker(0, db.classes.items.len);
-            
+
             // Reconstruct exprs_by_cost for the Enumerator
             try enumerator.exprs_by_cost.append(std.ArrayList(ast.ExprId).init(loop_allocator)); // Cost 0
             for (1..start_cost + 1) |_| {
                 try enumerator.exprs_by_cost.append(std.ArrayList(ast.ExprId).init(loop_allocator));
             }
-            
+
             for (db.classes.items) |cls| {
                 const expr_id = cls.canonical_expr;
                 // Compute cost dynamically
@@ -103,7 +99,6 @@ pub fn main() !void {
 
         const enum_start = std.time.milliTimestamp();
         const actual_start = if (start_cost == 0) 1 else start_cost + 1;
-        std.debug.print("DEBUG: actual_start={}, max_cost={}\n", .{actual_start, max_cost});
         for (actual_start..max_cost + 1) |c| {
             try enumerator.orchestrate_cost(c, num_threads);
         }
@@ -115,15 +110,15 @@ pub fn main() !void {
         var perfect_classes: usize = 0;
         var colliding_classes: usize = 0;
         var trapped_exprs: usize = 0;
-        
+
         var class_sizes = try allocator.alloc(u32, db.classes.items.len);
         defer allocator.free(class_sizes);
         @memset(class_sizes, 0);
-        
+
         for (db.expr_to_class.items) |cid| {
             class_sizes[cid] += 1;
         }
-        
+
         for (class_sizes) |size| {
             if (size == 1) {
                 perfect_classes += 1;
@@ -141,23 +136,20 @@ pub fn main() !void {
         std.debug.print("Expressions in Collisions:      {}\n", .{trapped_exprs});
         std.debug.print("Active Evaluation Grid Size:    {}\n", .{eval_ctx.total_samples});
         std.debug.print("---------------------\n\n", .{});
-        
-
 
         if (!verify_mode) break;
-
 
         const verify_start = std.time.milliTimestamp();
         const res = try verify.verify_classes(&db, &sqlite, &proven_cache, num_threads);
         const verify_end = std.time.milliTimestamp();
         const verify_elapsed_s = @as(f64, @floatFromInt(verify_end - verify_start)) / 1000.0;
         _ = if (verify_elapsed_s > 0) @as(f64, @floatFromInt(colliding_classes)) / verify_elapsed_s else 0;
-        
+
         if (config.active.is_perf_mode) {
             const total_point_evals = total_exprs * eval_ctx.total_samples;
             const eval_ops_per_sec = if (enum_elapsed_s > 0) @as(f64, @floatFromInt(total_point_evals)) / enum_elapsed_s else 0;
             const verify_exprs_per_sec = if (verify_elapsed_s > 0) @as(f64, @floatFromInt(trapped_exprs)) / verify_elapsed_s else 0;
-            
+
             std.debug.print("\n======================================\n", .{});
             std.debug.print("          SCONE PERF SUMMARY          \n", .{});
             std.debug.print("======================================\n", .{});
@@ -166,11 +158,11 @@ pub fn main() !void {
             std.debug.print("======================================\n", .{});
             break;
         }
-        
+
         if (res.mistakes == 0 and res.timeouts == 0) {
             std.debug.print("\n[SUCCESS] PERFECT CLASSES ACHIEVED!\n", .{});
             // Rules are now saved dynamically into SQLite via save_state
-            
+
             // Commit final successful state to SQLite
             try sqlite.save_state(&db, &eval_ctx, max_cost);
             if (config.active.distill_ces) {
@@ -186,7 +178,3 @@ pub fn main() !void {
         iteration += 1;
     }
 }
-
-
-
-

@@ -1,9 +1,5 @@
 const std = @import("std");
 
-var time_get_or_put: u64 = 0;
-var time_hash_append: u64 = 0;
-var time_vector_copy: u64 = 0;
-var time_ring_pop: u64 = 0;
 const ast = @import("ast.zig");
 const eval = @import("eval.zig");
 const database = @import("database.zig");
@@ -118,7 +114,7 @@ pub const Enumerator = struct {
             try self.db.expr_to_class.append(class_id);
             gop.value_ptr.* = database.SmallClassList.init(class_id);
             try cost_list.append(expr_id);
-            
+
             _ = try self.db.class_vectors.reserve(class_id);
             // Vector deferred to end of cost level
         } else {
@@ -153,7 +149,6 @@ pub const Enumerator = struct {
 
         try self.exprs_by_cost.append(cost0);
     }
-
 
     pub fn prepare_jobs_for_cost(self: *Enumerator, k: usize) !void {
         self.jobs.clearRetainingCapacity();
@@ -223,7 +218,7 @@ pub const Enumerator = struct {
                     const f_len = self.exprs_by_cost.items[c3].items.len;
                     const fan_out = @max(1, t_len * f_len);
                     const select_chunk = @max(1, config.q_size / (4 * fan_out));
-                    
+
                     var i: usize = 0;
                     while (i < len) : (i += select_chunk) {
                         const end = @min(i + select_chunk, len);
@@ -246,21 +241,12 @@ pub const Enumerator = struct {
         const expr_id = self.db.classes.items[class_id].canonical_expr;
         const expr = self.db.expr_arena.get(expr_id);
         const dst = @constCast(self.db.class_vectors.get(class_id));
-        
+
         switch (expr) {
             .variable, .constant => eval.fill_leaf(self.ctx, expr, dst),
-            .unary => |u| eval.combine_unary_into(
-                u.op, self.db.class_vectors.get(self.db.expr_to_class.items[u.expr]), dst),
-            .binary => |b| eval.combine_binary_into(
-                b.op,
-                self.db.class_vectors.get(self.db.expr_to_class.items[b.lhs]),
-                self.db.class_vectors.get(self.db.expr_to_class.items[b.rhs]),
-                dst),
-            .select => |s| eval.combine_select_into(
-                self.db.class_vectors.get(self.db.expr_to_class.items[s.cond]),
-                self.db.class_vectors.get(self.db.expr_to_class.items[s.true_val]),
-                self.db.class_vectors.get(self.db.expr_to_class.items[s.false_val]),
-                dst),
+            .unary => |u| eval.combine_unary_into(u.op, self.db.class_vectors.get(self.db.expr_to_class.items[u.expr]), dst),
+            .binary => |b| eval.combine_binary_into(b.op, self.db.class_vectors.get(self.db.expr_to_class.items[b.lhs]), self.db.class_vectors.get(self.db.expr_to_class.items[b.rhs]), dst),
+            .select => |s| eval.combine_select_into(self.db.class_vectors.get(self.db.expr_to_class.items[s.cond]), self.db.class_vectors.get(self.db.expr_to_class.items[s.true_val]), self.db.class_vectors.get(self.db.expr_to_class.items[s.false_val]), dst),
         }
     }
 
@@ -385,85 +371,72 @@ pub const Enumerator = struct {
 
                 var p_start = std.time.nanoTimestamp();
                 var p_res = self.queues[w].pop();
-                time_ring_pop += @as(u64, @intCast(std.time.nanoTimestamp() - p_start));
                 while (p_res) |res| {
                     try self.register_expr(&cost_list, res.expr, res.hash);
                     exprs_processed += 1;
                     p_start = std.time.nanoTimestamp();
                     p_res = self.queues[w].pop();
-                    time_ring_pop += @as(u64, @intCast(std.time.nanoTimestamp() - p_start));
                 }
 
                 if (self.workers_done[w].load(.acquire)) {
                     p_start = std.time.nanoTimestamp();
                     p_res = self.queues[w].pop();
-                    time_ring_pop += @as(u64, @intCast(std.time.nanoTimestamp() - p_start));
                     while (p_res) |res| {
                         try self.register_expr(&cost_list, res.expr, res.hash);
                         exprs_processed += 1;
                         p_start = std.time.nanoTimestamp();
                         p_res = self.queues[w].pop();
-                        time_ring_pop += @as(u64, @intCast(std.time.nanoTimestamp() - p_start));
                     }
                     workers_finished[w] = true;
                     active_workers -= 1;
                 }
             }
-            
+
             const now = std.time.milliTimestamp();
             if (now - last_print_time > 500) {
                 const elapsed_s = @as(f64, @floatFromInt(now - start_time)) / 1000.0;
                 const speed = if (elapsed_s > 0) @as(f64, @floatFromInt(exprs_processed)) / elapsed_s else 0.0;
-                std.debug.print("\rCost {d}: Processed {d} exprs ({d} unique) | {d:.1} expr/s | elapsed: {d:.1}s...   ", .{k, exprs_processed, self.db.classes.items.len, speed, elapsed_s});
+                std.debug.print("\rCost {d}: Processed {d} exprs ({d} unique) | {d:.1} expr/s | elapsed: {d:.1}s...   ", .{ k, exprs_processed, self.db.classes.items.len, speed, elapsed_s });
                 last_print_time = now;
             }
-            
+
             std.atomic.spinLoopHint();
         }
         const final_now = std.time.milliTimestamp();
         const total_elapsed_s = @as(f64, @floatFromInt(final_now - start_time)) / 1000.0;
         const final_speed = if (total_elapsed_s > 0) @as(f64, @floatFromInt(exprs_processed)) / total_elapsed_s else 0.0;
-        std.debug.print("\rCost {d}: Processed {d} exprs ({d} unique) | {d:.1} expr/s | elapsed: {d:.1}s - DONE.   \n", .{k, exprs_processed, self.db.classes.items.len, final_speed, total_elapsed_s});
+        std.debug.print("\rCost {d}: Processed {d} exprs ({d} unique) | {d:.1} expr/s | elapsed: {d:.1}s - DONE.   \n", .{ k, exprs_processed, self.db.classes.items.len, final_speed, total_elapsed_s });
 
         for (0..num_threads) |w| {
             threads[w].join();
         }
-        
+
         // DEFERRED PARALLEL VECTOR RECOMPUTE
         const end_class_id = self.db.classes.items.len;
         const total_new = end_class_id - start_class_id;
-        
+
         if (total_new > 0) {
             const recompute_start = std.time.milliTimestamp();
-            
+
             var recompute_threads = try self.allocator.alloc(std.Thread, num_threads);
             defer self.allocator.free(recompute_threads);
-            
+
             const chunk_size = (total_new + num_threads - 1) / num_threads;
             for (0..num_threads) |w| {
                 const s_idx = start_class_id + w * chunk_size;
                 const e_idx = @min(s_idx + chunk_size, end_class_id);
                 recompute_threads[w] = try std.Thread.spawn(.{}, recompute_worker, .{ self, s_idx, e_idx });
             }
-            
+
             for (recompute_threads) |t| {
                 t.join();
             }
             const recompute_time = std.time.milliTimestamp() - recompute_start;
-            time_vector_copy += @as(u64, @intCast(recompute_time)) * 1_000_000;
-            std.debug.print("    => Parallel Recompute for {d} novel classes took {d} ms.\n", .{total_new, recompute_time});
+            std.debug.print("    => Parallel Recompute for {d} novel classes took {d} ms.\n", .{ total_new, recompute_time });
         }
 
         try self.exprs_by_cost.append(cost_list);
 
-        std.debug.print("\n\n[PROFILING Cost {d}]\n", .{k});
-        std.debug.print("Time in getOrPut:         {d} ms\n", .{time_get_or_put / 1_000_000});
-        std.debug.print("Time in hash/arena append:{d} ms\n", .{time_hash_append / 1_000_000});
-        std.debug.print("Time in vector copy:      {d} ms\n", .{time_vector_copy / 1_000_000});
-        std.debug.print("Time in ring pop loop:    {d} ms\n\n", .{time_ring_pop / 1_000_000});
-        time_get_or_put = 0;
-        time_vector_copy = 0;
-        time_hash_append = 0;
-        time_ring_pop = 0;
+
     }
 };

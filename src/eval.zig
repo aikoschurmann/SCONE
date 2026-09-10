@@ -34,7 +34,7 @@ pub fn combine_unary_into(op: ast.UnOp, child: []const Vector64, out: []Vector64
                     .popcount => @as(Vector64, @intCast(@popCount(cv))),
                 };
             }
-        }
+        },
     }
 }
 
@@ -61,7 +61,7 @@ pub fn combine_binary_into(op: ast.BinOp, lhs: []const Vector64, rhs: []const Ve
                     .sle => @select(u32, @as(@Vector(BATCH_SIZE, i32), @bitCast(l)) <= @as(@Vector(BATCH_SIZE, i32), @bitCast(r)), @as(Vector64, @splat(1)), @as(Vector64, @splat(0))),
                 };
             }
-        }
+        },
     }
 }
 
@@ -101,7 +101,7 @@ pub const EvaluationContext = struct {
         ctx.y_batches[batch_idx][lane_idx] = y;
         ctx.z_batches[batch_idx][lane_idx] = z;
     }
-    
+
     pub fn deinit(self: *EvaluationContext) void {
         self.allocator.free(self.x_batches);
         self.allocator.free(self.y_batches);
@@ -114,10 +114,10 @@ pub const EvaluationContext = struct {
         if (sqlite) |db| {
             ce_count = db.get_ce_count();
         }
-        
+
         const total_samples = (if (config.active.use_cartesian_grid) config.num_edge_cases * config.num_edge_cases * config.num_edge_cases else 0) + ce_count + config.active.num_random_samples;
         const num_batches = (total_samples + BATCH_SIZE - 1) / BATCH_SIZE;
-        
+
         var ctx = EvaluationContext{
             .allocator = allocator,
             .num_batches = num_batches,
@@ -129,7 +129,6 @@ pub const EvaluationContext = struct {
         @memset(ctx.x_batches, @as(Vector64, @splat(0)));
         @memset(ctx.y_batches, @as(Vector64, @splat(0)));
         @memset(ctx.z_batches, @as(Vector64, @splat(0)));
-
 
         var idx: usize = 0;
 
@@ -145,7 +144,6 @@ pub const EvaluationContext = struct {
             }
         }
 
-        
         if (ce_count > 0) {
             std.debug.print("Loaded {} counterexamples from Z3.\n", .{ce_count});
         }
@@ -159,76 +157,74 @@ pub const EvaluationContext = struct {
     }
 };
 
-
-
 pub fn eval_batch(ctx: *const EvaluationContext, expr: ast.Expr, expr_arena_ref: *const expr_arena.ExpressionArena, batch_idx: usize) Vector64 {
-        switch (expr) {
-            .variable => |v| {
-                return switch (v) {
-                    .x => ctx.x_batches[batch_idx],
-                    .y => ctx.y_batches[batch_idx],
-                    .z => ctx.z_batches[batch_idx],
-                };
-            },
-            .constant => |c| {
-                return @splat(c);
-            },
-            .unary => |un| {
-                const child_expr = expr_arena_ref.get(un.expr);
-                const child_fp = eval_batch(ctx, child_expr, expr_arena_ref, batch_idx);
-                return switch (un.op) {
-                    .not => ~child_fp,
-                    .neg => @as(Vector64, @splat(0)) -% child_fp,
-                    .clz => @as(Vector64, @intCast(@clz(child_fp))),
-                    .ctz => @as(Vector64, @intCast(@ctz(child_fp))),
-                    .popcount => @as(Vector64, @intCast(@popCount(child_fp))),
-                };
-            },
-            .binary => |bin| {
-                const lhs_expr = expr_arena_ref.get(bin.lhs);
-                const rhs_expr = expr_arena_ref.get(bin.rhs);
-                const lhs_fp = eval_batch(ctx, lhs_expr, expr_arena_ref, batch_idx);
-                const rhs_fp = eval_batch(ctx, rhs_expr, expr_arena_ref, batch_idx);
-                return switch (bin.op) {
-                    .add => lhs_fp +% rhs_fp,
-                    .sub => lhs_fp -% rhs_fp,
-                    .mul => lhs_fp *% rhs_fp,
-                    .and_op => lhs_fp & rhs_fp,
-                    .or_op => lhs_fp | rhs_fp,
-                    .xor => lhs_fp ^ rhs_fp,
-                    .shl => lhs_fp << @as(@Vector(BATCH_SIZE, u5), @truncate(rhs_fp)),
-                    .lshr => lhs_fp >> @as(@Vector(BATCH_SIZE, u5), @truncate(rhs_fp)),
-                    .ashr => @as(Vector64, @bitCast(@as(@Vector(BATCH_SIZE, i32), @bitCast(lhs_fp)) >> @as(@Vector(BATCH_SIZE, u5), @truncate(rhs_fp)))),
-                    .eq => @select(u32, lhs_fp == rhs_fp, @as(Vector64, @splat(1)), @as(Vector64, @splat(0))),
-                    .ult => @select(u32, lhs_fp < rhs_fp, @as(Vector64, @splat(1)), @as(Vector64, @splat(0))),
-                    .ule => @select(u32, lhs_fp <= rhs_fp, @as(Vector64, @splat(1)), @as(Vector64, @splat(0))),
-                    .slt => @select(u32, @as(@Vector(BATCH_SIZE, i32), @bitCast(lhs_fp)) < @as(@Vector(BATCH_SIZE, i32), @bitCast(rhs_fp)), @as(Vector64, @splat(1)), @as(Vector64, @splat(0))),
-                    .sle => @select(u32, @as(@Vector(BATCH_SIZE, i32), @bitCast(lhs_fp)) <= @as(@Vector(BATCH_SIZE, i32), @bitCast(rhs_fp)), @as(Vector64, @splat(1)), @as(Vector64, @splat(0))),
-                };
-            },
-            .select => |sel| {
-                const cond_expr = expr_arena_ref.get(sel.cond);
-                const t_expr = expr_arena_ref.get(sel.true_val);
-                const f_expr = expr_arena_ref.get(sel.false_val);
-                const cond_fp = eval_batch(ctx, cond_expr, expr_arena_ref, batch_idx);
-                const t_fp = eval_batch(ctx, t_expr, expr_arena_ref, batch_idx);
-                const f_fp = eval_batch(ctx, f_expr, expr_arena_ref, batch_idx);
-                const condition_vector = cond_fp != @as(Vector64, @splat(0));
-                return @select(u32, condition_vector, t_fp, f_fp);
-            },
-        }
+    switch (expr) {
+        .variable => |v| {
+            return switch (v) {
+                .x => ctx.x_batches[batch_idx],
+                .y => ctx.y_batches[batch_idx],
+                .z => ctx.z_batches[batch_idx],
+            };
+        },
+        .constant => |c| {
+            return @splat(c);
+        },
+        .unary => |un| {
+            const child_expr = expr_arena_ref.get(un.expr);
+            const child_fp = eval_batch(ctx, child_expr, expr_arena_ref, batch_idx);
+            return switch (un.op) {
+                .not => ~child_fp,
+                .neg => @as(Vector64, @splat(0)) -% child_fp,
+                .clz => @as(Vector64, @intCast(@clz(child_fp))),
+                .ctz => @as(Vector64, @intCast(@ctz(child_fp))),
+                .popcount => @as(Vector64, @intCast(@popCount(child_fp))),
+            };
+        },
+        .binary => |bin| {
+            const lhs_expr = expr_arena_ref.get(bin.lhs);
+            const rhs_expr = expr_arena_ref.get(bin.rhs);
+            const lhs_fp = eval_batch(ctx, lhs_expr, expr_arena_ref, batch_idx);
+            const rhs_fp = eval_batch(ctx, rhs_expr, expr_arena_ref, batch_idx);
+            return switch (bin.op) {
+                .add => lhs_fp +% rhs_fp,
+                .sub => lhs_fp -% rhs_fp,
+                .mul => lhs_fp *% rhs_fp,
+                .and_op => lhs_fp & rhs_fp,
+                .or_op => lhs_fp | rhs_fp,
+                .xor => lhs_fp ^ rhs_fp,
+                .shl => lhs_fp << @as(@Vector(BATCH_SIZE, u5), @truncate(rhs_fp)),
+                .lshr => lhs_fp >> @as(@Vector(BATCH_SIZE, u5), @truncate(rhs_fp)),
+                .ashr => @as(Vector64, @bitCast(@as(@Vector(BATCH_SIZE, i32), @bitCast(lhs_fp)) >> @as(@Vector(BATCH_SIZE, u5), @truncate(rhs_fp)))),
+                .eq => @select(u32, lhs_fp == rhs_fp, @as(Vector64, @splat(1)), @as(Vector64, @splat(0))),
+                .ult => @select(u32, lhs_fp < rhs_fp, @as(Vector64, @splat(1)), @as(Vector64, @splat(0))),
+                .ule => @select(u32, lhs_fp <= rhs_fp, @as(Vector64, @splat(1)), @as(Vector64, @splat(0))),
+                .slt => @select(u32, @as(@Vector(BATCH_SIZE, i32), @bitCast(lhs_fp)) < @as(@Vector(BATCH_SIZE, i32), @bitCast(rhs_fp)), @as(Vector64, @splat(1)), @as(Vector64, @splat(0))),
+                .sle => @select(u32, @as(@Vector(BATCH_SIZE, i32), @bitCast(lhs_fp)) <= @as(@Vector(BATCH_SIZE, i32), @bitCast(rhs_fp)), @as(Vector64, @splat(1)), @as(Vector64, @splat(0))),
+            };
+        },
+        .select => |sel| {
+            const cond_expr = expr_arena_ref.get(sel.cond);
+            const t_expr = expr_arena_ref.get(sel.true_val);
+            const f_expr = expr_arena_ref.get(sel.false_val);
+            const cond_fp = eval_batch(ctx, cond_expr, expr_arena_ref, batch_idx);
+            const t_fp = eval_batch(ctx, t_expr, expr_arena_ref, batch_idx);
+            const f_fp = eval_batch(ctx, f_expr, expr_arena_ref, batch_idx);
+            const condition_vector = cond_fp != @as(Vector64, @splat(0));
+            return @select(u32, condition_vector, t_fp, f_fp);
+        },
     }
+}
 
-    pub fn eval_and_hash(ctx: *const EvaluationContext, expr: ast.Expr, expr_arena_ref: *const expr_arena.ExpressionArena) database.FingerprintHash {
-        var hasher1 = std.hash.Wyhash.init(0);
-        var hasher2 = std.hash.Wyhash.init(0x1337_CAFE_BABE_BEEF);
-        for (0..ctx.num_batches) |batch_idx| {
-            const batch_res = eval_batch(ctx, expr, expr_arena_ref, batch_idx);
-            const bytes = std.mem.asBytes(&batch_res);
-            hasher1.update(bytes);
-            hasher2.update(bytes);
-        }
-        const h1 = @as(u128, hasher1.final());
-        const h2 = @as(u128, hasher2.final());
-        return (h1 << 64) | h2;
+pub fn eval_and_hash(ctx: *const EvaluationContext, expr: ast.Expr, expr_arena_ref: *const expr_arena.ExpressionArena) database.FingerprintHash {
+    var hasher1 = std.hash.Wyhash.init(0);
+    var hasher2 = std.hash.Wyhash.init(0x1337_CAFE_BABE_BEEF);
+    for (0..ctx.num_batches) |batch_idx| {
+        const batch_res = eval_batch(ctx, expr, expr_arena_ref, batch_idx);
+        const bytes = std.mem.asBytes(&batch_res);
+        hasher1.update(bytes);
+        hasher2.update(bytes);
     }
+    const h1 = @as(u128, hasher1.final());
+    const h2 = @as(u128, hasher2.final());
+    return (h1 << 64) | h2;
+}

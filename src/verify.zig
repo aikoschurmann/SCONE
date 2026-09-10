@@ -439,8 +439,6 @@ pub fn verify_classes(db: *database.ExpressionDatabase, sqlite: *sqlite_db.Sqlit
     const random = prng.random();
     random.shuffle(CollidingClass, top_slice);
 
-
-
     var pool: std.Thread.Pool = undefined;
     try pool.init(.{ .allocator = std.heap.page_allocator });
     defer pool.deinit();
@@ -493,13 +491,7 @@ pub fn verify_classes(db: *database.ExpressionDatabase, sqlite: *sqlite_db.Sqlit
     std.debug.print("\nZ3 Verification complete in {d:.2}s. Raw CEs: {}, Unique CEs added: {}\n", .{ elapsed_s, mistakes, unique_count });
 
     if (timeout_classes.items.len > 0) {
-        const tf = std.fs.cwd().createFile("timeouts.txt", .{}) catch null;
-        if (tf) |file| {
-            defer file.close();
-            for (timeout_classes.items) |cid| {
-                file.writer().print("Class {d} timed out\n", .{cid}) catch {};
-            }
-        }
+        std.debug.print("Warning: {} classes timed out and could not be fully verified.\n", .{timeout_classes.items.len});
     }
 
     return .{ .mistakes = mistakes, .timeouts = timeouts };

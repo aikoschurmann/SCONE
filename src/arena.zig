@@ -24,7 +24,7 @@ pub const ExpressionArena = struct {
         // We pre-allocate it to 100,000 to hold 6.5 Billion nodes safely without ever resizing.
         // 100,000 pointers * 8 bytes = 800 KB of RAM. Extremely lightweight.
         const chunks = try std.ArrayList(*Chunk).initCapacity(allocator, 100_000);
-        
+
         return .{
             .allocator = allocator,
             .chunks = chunks,
@@ -41,19 +41,19 @@ pub const ExpressionArena = struct {
 
     pub fn add(self: *ExpressionArena, expr: ast.Expr) !ast.ExprId {
         const id = @as(ast.ExprId, @intCast(self.len));
-        
+
         const chunk_idx = id / CHUNK_SIZE;
         const item_idx = id % CHUNK_SIZE;
-        
+
         if (chunk_idx >= self.chunks.items.len) {
             // Allocate a new chunk
             const new_chunk = try self.allocator.create(Chunk);
             self.chunks.appendAssumeCapacity(new_chunk);
         }
-        
+
         self.chunks.items[chunk_idx][item_idx] = expr;
         self.len += 1;
-        
+
         return id;
     }
 
@@ -63,7 +63,6 @@ pub const ExpressionArena = struct {
         return self.chunks.items[chunk_idx][item_idx];
     }
 };
-
 
 pub fn format_expr(expr_id: ast.ExprId, arena: *const ExpressionArena, writer: anytype) !void {
     const expr = arena.get(expr_id);

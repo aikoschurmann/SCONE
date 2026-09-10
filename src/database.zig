@@ -11,7 +11,6 @@ pub const EquivalenceClass = struct {
     canonical_expr: ast.ExprId,
 };
 
-
 pub const ClassId = u32;
 
 pub const SmallClassList = union(enum) {
@@ -52,7 +51,7 @@ pub const SmallClassList = union(enum) {
 
 pub const ExpressionDatabase = struct {
     allocator: std.mem.Allocator,
-    
+
     expr_arena: expr_arena.ExpressionArena,
     expr_to_class: std.ArrayList(ClassId),
     classes: std.ArrayList(EquivalenceClass),
@@ -85,7 +84,4 @@ pub const ExpressionDatabase = struct {
         self.expr_arena.deinit();
         self.class_vectors.deinit();
     }
-
-
-
-    };
+};
