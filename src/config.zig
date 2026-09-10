@@ -22,34 +22,10 @@ pub const q_size = 131072;
 pub const core_numbers = [_]u32{ 0, 1, 2, 3, 4, 8, 16, 31, 32 };
 pub const bit_patterns = [_]u32{ 0xFFFF, 0x55555555, 0xAAAAAAAA };
 
-pub const base_edge_cases = blk: {
-    var cases: [core_numbers.len * 2 + bit_patterns.len + 3]u32 = undefined;
-    var idx = 0;
-    for (core_numbers) |n| {
-        cases[idx] = n;
-        idx += 1;
-    }
-    for (core_numbers) |n| {
-        if (n != 0) {
-            cases[idx] = 0 -% n;
-            idx += 1;
-        }
-    }
-    const int_min: u32 = 0x80000000;
-    const int_max: u32 = 0x7FFFFFFF;
-    cases[idx] = int_min;
-    idx += 1;
-    cases[idx] = int_max;
-    idx += 1;
-    cases[idx] = int_min +% 1;
-    idx += 1;
-    cases[idx] = int_max -% 1;
-    idx += 1;
-    for (bit_patterns) |p| {
-        cases[idx] = p;
-        idx += 1;
-    }
-    break :blk cases;
+pub const base_edge_cases = [_]u32{
+    0,          1,          2,          3,          4,          8,          16,         31,         32,
+    0xFFFFFFFF, 0xFFFFFFFE, 0xFFFFFFFD, 0xFFFFFFFC, 0xFFFFFFF8, 0xFFFFFFF0, 0xFFFFFFE1, 0xFFFFFFE0, 0x80000000,
+    0x7FFFFFFF, 0x80000001, 0x7FFFFFFE, 0xFFFF,     0x55555555, 0xAAAAAAAA,
 };
 
 pub const num_edge_cases = base_edge_cases.len;
