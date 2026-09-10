@@ -145,37 +145,6 @@ pub const EvaluationContext = struct {
             }
         }
 
-        // 2) On top of that (not instead of it), fill the newly added
-        //    capacity with random triples. This is purely additive: it
-        //    catches expressions that agree everywhere on the structured
-        //    edge grid but diverge on generic inputs, without weakening any
-        //    of the existing boundary coverage.
-        // Read counterexamples from CEGIS loop
-        const ce_file = std.fs.cwd().openFile(config.active.counterexamples_file, .{}) catch null;
-        ce_count = 0;
-        if (ce_file) |f| {
-            defer f.close();
-            var buf_reader = std.io.bufferedReader(f.reader());
-            var stream = buf_reader.reader();
-            var buf: [1024]u8 = undefined;
-            while (stream.readUntilDelimiterOrEof(&buf, '\n') catch null) |line| {
-                if (line.len == 0) continue;
-                var it = std.mem.split(u8, line, ",");
-                const x_str = it.next() orelse continue;
-                const y_str = it.next() orelse continue;
-                const z_str = it.next() orelse continue;
-                const x_val = std.fmt.parseInt(i64, std.mem.trim(u8, x_str, " \t"), 10) catch continue;
-                const y_val = std.fmt.parseInt(i64, std.mem.trim(u8, y_str, " \t"), 10) catch continue;
-                const z_val = std.fmt.parseInt(i64, std.mem.trim(u8, z_str, " \t"), 10) catch continue;
-                const ux = @as(u32, @bitCast(@as(i32, @truncate(x_val))));
-                const uy = @as(u32, @bitCast(@as(i32, @truncate(y_val))));
-                const uz = @as(u32, @bitCast(@as(i32, @truncate(z_val))));
-                ctx.setSample(idx, ux, uy, uz);
-                ce_count += 1;
-                idx += 1;
-                if (idx >= total_samples) break;
-            }
-        }
         
         if (ce_count > 0) {
             std.debug.print("Loaded {} counterexamples from Z3.\n", .{ce_count});
