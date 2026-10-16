@@ -13,7 +13,8 @@ pub const ClassVectorArena = struct {
     len: usize,
 
     pub fn init(allocator: std.mem.Allocator, num_batches: usize) !ClassVectorArena {
-        const chunks = try std.ArrayList([]Vector64).initCapacity(allocator, 20_000);
+        // Never grows (reserve appends without checking): 200K chunks cover 1.6 billion classes.
+        const chunks = try std.ArrayList([]Vector64).initCapacity(allocator, 200_000);
         return .{
             .allocator = allocator,
             .num_batches = num_batches,
