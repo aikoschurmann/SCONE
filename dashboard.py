@@ -18,6 +18,7 @@ import re
 import signal
 import sqlite3
 import subprocess
+import sys
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -1120,6 +1121,11 @@ class Handler(BaseHTTPRequestHandler):
                 RUN.queue(opts, action == "restart")
             elif action == "unqueue":
                 RUN.unqueue()
+            elif action == "client_error":
+                # The page reports its uncaught errors so a frozen view leaves a trace here.
+                print(time.strftime("%H:%M:%S"), "UI error:", str(opts.get("message", ""))[:500], "|",
+                      str(opts.get("where", ""))[:200], "|", str(opts.get("stack", ""))[:1500].replace("\n", " <- "),
+                      file=sys.stderr, flush=True)
             elif action in ("stop", "pause", "resume"):
                 if action == "stop":
                     RUN.unqueue()  # an explicit stop means stop everything
@@ -1142,7 +1148,9 @@ class Handler(BaseHTTPRequestHandler):
                 with RUN.cond:
                     RUN.cond.wait_for(lambda: RUN.version != seen_version, timeout=15)
                     if RUN.version == seen_version:
-                        msg = b": ping\n\n"
+                        # a real event (not an SSE comment), so the page can tell a quiet server
+                        # from a dead connection
+                        msg = b"event: ping\ndata: {}\n\n"
                     else:
                         seen_version = RUN.version
                         state = RUN.snapshot()
