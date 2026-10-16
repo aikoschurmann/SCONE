@@ -1,4 +1,18 @@
 /zig-out
-/md
 /.zig-cache
+/md
 /out
+
+# run state and outputs (scone.db is the result database)
+/scone.db
+/scone.db-shm
+/scone.db-wal
+/scone_status.json
+/scone_status.json.tmp
+/scone_run.log
+/scone_run.log.1
+/scone_run.pid
+/z3log
+
+__pycache__/
+.DS_Store

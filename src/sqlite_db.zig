@@ -32,6 +32,7 @@ pub const SqliteDb = struct {
             \\);
             \\CREATE TABLE IF NOT EXISTS expressions (
             \\    id INTEGER PRIMARY KEY,
+            \\    class_id INTEGER,
             \\    tag TEXT,
             \\    op TEXT,
             \\    c1 INTEGER,
@@ -46,6 +47,8 @@ pub const SqliteDb = struct {
             \\    status TEXT DEFAULT 'verified'
             \\);
         );
+        // Migrate databases created before expressions.class_id existed (fails harmlessly if present).
+        _ = c.sqlite3_exec(self.db, "ALTER TABLE expressions ADD COLUMN class_id INTEGER;", null, null, null);
         return self;
     }
 
@@ -69,44 +72,24 @@ pub const SqliteDb = struct {
         try self.exec("COMMIT;");
     }
 
-    pub fn save_state(self: *const SqliteDb, db_scone: *const database.ExpressionDatabase, eval_ctx: *const eval.EvaluationContext, max_cost: usize) !void {
-        std.debug.print("\nSaving engine state to SQLite...\n", .{});
+    /// Clears saved expressions, classes and progress (counterexamples are kept: they remain useful inputs).
+    pub fn reset_state(self: *const SqliteDb) !void {
+        try self.exec("DELETE FROM expressions; DELETE FROM classes; DELETE FROM meta;");
+    }
+
+    /// Appends the expressions and classes created since the previous save and marks `max_cost`
+    /// as fully verified, so a resumed run never re-proves a finished level. Splits only move
+    /// expressions of the level being saved, so earlier rows never change, apart from the
+    /// status of classes that timed out.
+    pub fn save_level(self: *const SqliteDb, db_scone: *const database.ExpressionDatabase, expr_from: usize, class_from: usize, max_cost: usize) !void {
         try self.begin();
 
-        // Save meta
-        var stmt_meta: ?*c.sqlite3_stmt = null;
-        _ = c.sqlite3_prepare_v2(self.db, "INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?);", -1, &stmt_meta, null);
-        _ = c.sqlite3_bind_text(stmt_meta, 1, "max_cost", -1, c.SQLITE_STATIC);
-        _ = c.sqlite3_bind_int64(stmt_meta, 2, @intCast(max_cost));
-        _ = c.sqlite3_step(stmt_meta);
-        _ = c.sqlite3_finalize(stmt_meta);
-
-        // Save counterexamples (Only append new ones)
-        // Wait, just clear and rewrite for safety, it's tiny.
-        try self.exec("DELETE FROM counterexamples;");
-        var stmt_ce: ?*c.sqlite3_stmt = null;
-        _ = c.sqlite3_prepare_v2(self.db, "INSERT INTO counterexamples (id, x, y, z) VALUES (?, ?, ?, ?);", -1, &stmt_ce, null);
-
-        for (0..eval_ctx.total_samples) |i| {
-            const batch = i / eval.BATCH_SIZE;
-            const lane = i % eval.BATCH_SIZE;
-            _ = c.sqlite3_reset(stmt_ce);
-            _ = c.sqlite3_bind_int64(stmt_ce, 1, @intCast(i));
-            _ = c.sqlite3_bind_int64(stmt_ce, 2, eval_ctx.x_batches[batch][lane]);
-            _ = c.sqlite3_bind_int64(stmt_ce, 3, eval_ctx.y_batches[batch][lane]);
-            _ = c.sqlite3_bind_int64(stmt_ce, 4, eval_ctx.z_batches[batch][lane]);
-            _ = c.sqlite3_step(stmt_ce);
-        }
-        _ = c.sqlite3_finalize(stmt_ce);
-
-        // Save expressions
-        try self.exec("DELETE FROM expressions;");
         var stmt_expr: ?*c.sqlite3_stmt = null;
-        _ = c.sqlite3_prepare_v2(self.db, "INSERT INTO expressions (id, class_id, tag, op, c1, c2, c3) VALUES (?, ?, ?, ?, ?, ?, ?);", -1, &stmt_expr, null);
-
-        for (0..db_scone.expr_arena.len) |i| {
+        _ = c.sqlite3_prepare_v2(self.db, "INSERT OR REPLACE INTO expressions (id, class_id, tag, op, c1, c2, c3) VALUES (?, ?, ?, ?, ?, ?, ?);", -1, &stmt_expr, null);
+        for (expr_from..db_scone.expr_arena.len) |i| {
             const expr = db_scone.expr_arena.get(@intCast(i));
             _ = c.sqlite3_reset(stmt_expr);
+            _ = c.sqlite3_clear_bindings(stmt_expr);
             _ = c.sqlite3_bind_int64(stmt_expr, 1, @intCast(i));
             _ = c.sqlite3_bind_int64(stmt_expr, 2, @intCast(db_scone.expr_to_class.items[i]));
             switch (expr) {
@@ -129,35 +112,49 @@ pub const SqliteDb = struct {
                     _ = c.sqlite3_bind_int64(stmt_expr, 5, b.lhs);
                     _ = c.sqlite3_bind_int64(stmt_expr, 6, b.rhs);
                 },
-                .select => |s| {
+                .select => |sel| {
                     _ = c.sqlite3_bind_text(stmt_expr, 3, "select", -1, c.SQLITE_STATIC);
-                    _ = c.sqlite3_bind_int64(stmt_expr, 5, s.cond);
-                    _ = c.sqlite3_bind_int64(stmt_expr, 6, s.true_val);
-                    _ = c.sqlite3_bind_int64(stmt_expr, 7, s.false_val);
+                    _ = c.sqlite3_bind_int64(stmt_expr, 5, sel.cond);
+                    _ = c.sqlite3_bind_int64(stmt_expr, 6, sel.true_val);
+                    _ = c.sqlite3_bind_int64(stmt_expr, 7, sel.false_val);
                 },
             }
             _ = c.sqlite3_step(stmt_expr);
         }
         _ = c.sqlite3_finalize(stmt_expr);
 
-        // Save classes
-        try self.exec("DELETE FROM classes;");
         var stmt_cls: ?*c.sqlite3_stmt = null;
-        _ = c.sqlite3_prepare_v2(self.db, "INSERT INTO classes (id, hash_high, hash_low, canonical_expr_id) VALUES (?, ?, ?, ?);", -1, &stmt_cls, null);
-
-        for (0..db_scone.classes.items.len) |i| {
+        _ = c.sqlite3_prepare_v2(self.db, "INSERT OR REPLACE INTO classes (id, hash_high, hash_low, canonical_expr_id, status) VALUES (?, ?, ?, ?, ?);", -1, &stmt_cls, null);
+        for (class_from..db_scone.classes.items.len) |i| {
             const cls = db_scone.classes.items[i];
             _ = c.sqlite3_reset(stmt_cls);
             _ = c.sqlite3_bind_int64(stmt_cls, 1, @intCast(i));
-            _ = c.sqlite3_bind_int64(stmt_cls, 2, @intCast(cls.hash >> 64));
-            _ = c.sqlite3_bind_int64(stmt_cls, 3, @intCast(cls.hash & 0xFFFFFFFFFFFFFFFF));
+            // hash_high is unused since fingerprints shrank to 64 bits; kept for schema compatibility.
+            _ = c.sqlite3_bind_int64(stmt_cls, 2, 0);
+            _ = c.sqlite3_bind_int64(stmt_cls, 3, @bitCast(cls.hash));
             _ = c.sqlite3_bind_int64(stmt_cls, 4, cls.canonical_expr);
+            _ = c.sqlite3_bind_text(stmt_cls, 5, if (cls.unverified) "unverified" else "verified", -1, c.SQLITE_STATIC);
             _ = c.sqlite3_step(stmt_cls);
         }
         _ = c.sqlite3_finalize(stmt_cls);
 
+        var stmt_status: ?*c.sqlite3_stmt = null;
+        _ = c.sqlite3_prepare_v2(self.db, "UPDATE classes SET status = 'unverified' WHERE id = ?;", -1, &stmt_status, null);
+        for (db_scone.classes.items[0..@min(class_from, db_scone.classes.items.len)], 0..) |cls, i| {
+            if (!cls.unverified) continue;
+            _ = c.sqlite3_reset(stmt_status);
+            _ = c.sqlite3_bind_int64(stmt_status, 1, @intCast(i));
+            _ = c.sqlite3_step(stmt_status);
+        }
+        _ = c.sqlite3_finalize(stmt_status);
+
+        var stmt_meta: ?*c.sqlite3_stmt = null;
+        _ = c.sqlite3_prepare_v2(self.db, "INSERT OR REPLACE INTO meta (key, value) VALUES ('max_cost', ?);", -1, &stmt_meta, null);
+        _ = c.sqlite3_bind_int64(stmt_meta, 1, @intCast(max_cost));
+        _ = c.sqlite3_step(stmt_meta);
+        _ = c.sqlite3_finalize(stmt_meta);
+
         try self.commit();
-        std.debug.print("SQLite save complete!\n", .{});
     }
 
     pub fn get_ce_count(self: *const SqliteDb) usize {
@@ -172,26 +169,36 @@ pub const SqliteDb = struct {
         return count;
     }
 
-    pub fn load_ces(self: *const SqliteDb, eval_ctx: anytype) usize {
+    /// Writes up to `max` stored counterexamples into the sample grid starting at `start_idx`.
+    pub fn load_ces(self: *const SqliteDb, eval_ctx: anytype, start_idx: usize, max: usize) usize {
         var stmt: ?*c.sqlite3_stmt = null;
         _ = c.sqlite3_prepare_v2(self.db, "SELECT x, y, z FROM counterexamples ORDER BY id ASC;", -1, &stmt, null);
-        var ce_idx: usize = 0;
-        while (c.sqlite3_step(stmt) == c.SQLITE_ROW) {
-            eval_ctx.setSample(ce_idx, @intCast(c.sqlite3_column_int64(stmt, 0)), @intCast(c.sqlite3_column_int64(stmt, 1)), @intCast(c.sqlite3_column_int64(stmt, 2)));
-            ce_idx += 1;
+        var n: usize = 0;
+        while (n < max and c.sqlite3_step(stmt) == c.SQLITE_ROW) : (n += 1) {
+            eval_ctx.setSample(start_idx + n, decode_u32(c.sqlite3_column_int64(stmt, 0)), decode_u32(c.sqlite3_column_int64(stmt, 1)), decode_u32(c.sqlite3_column_int64(stmt, 2)));
         }
         _ = c.sqlite3_finalize(stmt);
-        return ce_idx;
+        return n;
     }
 
-    pub fn append_ce(self: *SqliteDb, x: i64, y: i64, z: i64) !void {
+    // Older rows may hold sign-extended i32 values; accept both encodings.
+    fn decode_u32(v: i64) u32 {
+        return @truncate(@as(u64, @bitCast(v)));
+    }
+
+    pub fn append_ces(self: *SqliteDb, ces: anytype) !void {
+        try self.begin();
         var stmt: ?*c.sqlite3_stmt = null;
         _ = c.sqlite3_prepare_v2(self.db, "INSERT INTO counterexamples (x, y, z) VALUES (?, ?, ?);", -1, &stmt, null);
-        _ = c.sqlite3_bind_int64(stmt, 1, x);
-        _ = c.sqlite3_bind_int64(stmt, 2, y);
-        _ = c.sqlite3_bind_int64(stmt, 3, z);
-        _ = c.sqlite3_step(stmt);
+        for (ces) |ce| {
+            _ = c.sqlite3_reset(stmt);
+            _ = c.sqlite3_bind_int64(stmt, 1, ce.x);
+            _ = c.sqlite3_bind_int64(stmt, 2, ce.y);
+            _ = c.sqlite3_bind_int64(stmt, 3, ce.z);
+            _ = c.sqlite3_step(stmt);
+        }
         _ = c.sqlite3_finalize(stmt);
+        try self.commit();
     }
 
     pub fn replace_ces(self: *SqliteDb, ce_indices: []const usize, eval_ctx: *const eval.EvaluationContext) !void {
@@ -202,9 +209,9 @@ pub const SqliteDb = struct {
         for (ce_indices, 0..) |idx, i| {
             const batch = idx / eval.BATCH_SIZE;
             const lane = idx % eval.BATCH_SIZE;
-            const x = @as(i32, @bitCast(@as(u32, @truncate(eval_ctx.x_batches[batch][lane]))));
-            const y = @as(i32, @bitCast(@as(u32, @truncate(eval_ctx.y_batches[batch][lane]))));
-            const z = @as(i32, @bitCast(@as(u32, @truncate(eval_ctx.z_batches[batch][lane]))));
+            const x: u32 = eval_ctx.x_batches[batch][lane];
+            const y: u32 = eval_ctx.y_batches[batch][lane];
+            const z: u32 = eval_ctx.z_batches[batch][lane];
 
             _ = c.sqlite3_reset(stmt);
             _ = c.sqlite3_bind_int64(stmt, 1, @intCast(i));
@@ -233,7 +240,7 @@ pub const SqliteDb = struct {
 
         // Load Expressions
         var stmt_expr: ?*c.sqlite3_stmt = null;
-        _ = c.sqlite3_prepare_v2(self.db, "SELECT tag, op, c1, c2, c3 FROM expressions ORDER BY id ASC;", -1, &stmt_expr, null);
+        _ = c.sqlite3_prepare_v2(self.db, "SELECT tag, op, c1, c2, c3, class_id FROM expressions ORDER BY id ASC;", -1, &stmt_expr, null);
         while (c.sqlite3_step(stmt_expr) == c.SQLITE_ROW) {
             const tag = c.sqlite3_column_text(stmt_expr, 0);
             const tag_str = std.mem.span(tag);
@@ -250,31 +257,29 @@ pub const SqliteDb = struct {
                 expr = .{ .select = .{ .cond = @intCast(c.sqlite3_column_int64(stmt_expr, 2)), .true_val = @intCast(c.sqlite3_column_int64(stmt_expr, 3)), .false_val = @intCast(c.sqlite3_column_int64(stmt_expr, 4)) } };
             }
             _ = try db_scone.expr_arena.add(expr);
+            try db_scone.expr_to_class.append(@intCast(c.sqlite3_column_int64(stmt_expr, 5)));
         }
         _ = c.sqlite3_finalize(stmt_expr);
 
         // Load Classes
         var stmt_cls: ?*c.sqlite3_stmt = null;
-        _ = c.sqlite3_prepare_v2(self.db, "SELECT id, hash_high, hash_low, canonical_expr_id FROM classes ORDER BY id ASC;", -1, &stmt_cls, null);
+        _ = c.sqlite3_prepare_v2(self.db, "SELECT id, hash_high, hash_low, canonical_expr_id, status FROM classes ORDER BY id ASC;", -1, &stmt_cls, null);
         while (c.sqlite3_step(stmt_cls) == c.SQLITE_ROW) {
             const cls_id = @as(u32, @intCast(c.sqlite3_column_int64(stmt_cls, 0)));
-            const hash_high = @as(u128, @as(u64, @bitCast(c.sqlite3_column_int64(stmt_cls, 1))));
-            const hash_low = @as(u128, @as(u64, @bitCast(c.sqlite3_column_int64(stmt_cls, 2))));
-            const hash = (hash_high << 64) | hash_low;
+            // Stored hashes are stale anyway (see below); the low word is enough as a placeholder.
+            const hash: u64 = @bitCast(c.sqlite3_column_int64(stmt_cls, 2));
             const canonical_expr = @as(u32, @intCast(c.sqlite3_column_int64(stmt_cls, 3)));
 
-            try db_scone.classes.append(.{ .hash = hash, .canonical_expr = canonical_expr });
-            _ = try db_scone.class_vectors.reserve(cls_id);
+            const status = c.sqlite3_column_text(stmt_cls, 4);
+            const unverified = status != null and std.mem.eql(u8, std.mem.span(status), "unverified");
 
-            // Reconstruct deduplication mappings
-            const gop = try db_scone.fp_to_class.getOrPut(hash);
-            gop.value_ptr.* = database.SmallClassList.init(cls_id);
+            try db_scone.classes.append(.{ .hash = hash, .canonical_expr = canonical_expr, .unverified = unverified });
+            _ = try db_scone.class_vectors.reserve(cls_id);
         }
         _ = c.sqlite3_finalize(stmt_cls);
 
-        // Wait, expr_to_class needs to map EVERY expr in the arena to its class!
-        // To perfectly restore state, we would need to save `expr_to_class` as a separate table.
-        // Actually, evaluating the class vectors can just be done via `recompute_worker(0, classes.len)`!
+        // Class hashes are only valid for the grid they were computed on. The caller must
+        // recompute class vectors and call Enumerator.rehash_classes() before enumerating.
 
         return max_cost;
     }

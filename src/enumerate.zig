@@ -5,6 +5,7 @@ const eval = @import("eval.zig");
 const database = @import("database.zig");
 const config = @import("config.zig");
 const prune = @import("prune.zig");
+const absint = @import("absint.zig");
 
 fn RingBuffer(comptime T: type, comptime capacity: usize) type {
     return struct {
@@ -60,7 +61,11 @@ pub const Enumerator = struct {
     exprs_by_cost: std.ArrayList(std.ArrayList(ast.ExprId)),
     allocator: std.mem.Allocator,
     total_evaluations: std.atomic.Value(usize),
+    /// When false (the final level of a run that does not distill), class vectors are neither
+    /// reserved nor computed: nothing reads them once the last level has been verified.
+    materialize: bool = true,
 
+    class_av: std.ArrayList(absint.AV),
     jobs: std.ArrayList(Job),
     job_counter: std.atomic.Value(usize),
     queues: []Queue,
@@ -73,6 +78,7 @@ pub const Enumerator = struct {
             .exprs_by_cost = std.ArrayList(std.ArrayList(ast.ExprId)).init(allocator),
             .allocator = allocator,
             .total_evaluations = std.atomic.Value(usize).init(0),
+            .class_av = std.ArrayList(absint.AV).init(allocator),
             .jobs = std.ArrayList(Job).init(allocator),
             .job_counter = std.atomic.Value(usize).init(0),
             .queues = &[_]Queue{},
@@ -85,9 +91,23 @@ pub const Enumerator = struct {
             list.deinit();
         }
         self.exprs_by_cost.deinit();
+        self.class_av.deinit();
         self.jobs.deinit();
         self.allocator.free(self.queues);
         self.allocator.free(self.workers_done);
+    }
+
+    pub fn update_class_av(self: *Enumerator) !void {
+        const num_classes = self.db.classes.items.len;
+        if (self.class_av.items.len < num_classes) {
+            try self.class_av.ensureTotalCapacity(num_classes);
+            const start = self.class_av.items.len;
+            for (start..num_classes) |cid| {
+                const canon = self.db.classes.items[cid].canonical_expr;
+                const av = absint.eval_id(canon, &self.db.expr_arena, self.class_av.items, self.db.expr_to_class.items);
+                self.class_av.appendAssumeCapacity(av);
+            }
+        }
     }
 
     pub fn setup_threads(self: *Enumerator, num_threads: usize) !void {
@@ -102,28 +122,37 @@ pub const Enumerator = struct {
     }
 
     fn register_expr(self: *Enumerator, cost_list: *std.ArrayList(ast.ExprId), expr: ast.Expr, hash: database.FingerprintHash) !void {
-        const gop = try self.db.fp_to_class.getOrPut(hash);
         const expr_id = try self.db.expr_arena.add(expr);
-        if (!gop.found_existing) {
-            const class_id = @as(database.ClassId, @intCast(self.db.classes.items.len));
-
-            try self.db.classes.append(.{
-                .hash = hash,
-                .canonical_expr = expr_id,
-            });
+        if (self.db.fp_to_class.get(self.db.classes.items, hash)) |class_id| {
             try self.db.expr_to_class.append(class_id);
-            gop.value_ptr.* = database.SmallClassList.init(class_id);
-            try cost_list.append(expr_id);
-
-            _ = try self.db.class_vectors.reserve(class_id);
-            // Vector deferred to end of cost level
-        } else {
-            const class_id = switch (gop.value_ptr.*) {
-                .inline_val => |id| id,
-                .dynamic => |list| list.items[0],
-            };
-            try self.db.expr_to_class.append(class_id);
+            return;
         }
+        const class_id = @as(database.ClassId, @intCast(self.db.classes.items.len));
+        try self.db.classes.append(.{
+            .hash = hash,
+            .canonical_expr = expr_id,
+        });
+        try self.db.expr_to_class.append(class_id);
+        try self.db.fp_to_class.insert(self.db.classes.items, class_id);
+        try cost_list.append(expr_id);
+
+        if (self.materialize) _ = try self.db.class_vectors.reserve(class_id);
+        // Vector deferred to end of cost level
+    }
+
+    /// Upper bound on the expressions the prepared jobs can emit (before pruning).
+    fn candidate_bound(self: *const Enumerator) usize {
+        var n: usize = 0;
+        const lists = self.exprs_by_cost.items;
+        for (self.jobs.items) |job| {
+            const lhs = job.lhs_end - job.lhs_start;
+            n += switch (job.job_type) {
+                .unop => lhs,
+                .binop => lhs * lists[job.c2].items.len,
+                .select => lhs * lists[job.c2].items.len * lists[job.c3].items.len,
+            };
+        }
+        return n;
     }
 
     pub fn seed_cost_0(self: *Enumerator) !void {
@@ -137,7 +166,8 @@ pub const Enumerator = struct {
             try self.register_expr(&cost0, expr, fp);
         }
 
-        for (config.search_constants) |c| {
+        for (config.search_constants, 0..) |c, i| {
+            if (config.active.const_mask & (@as(u32, 1) << @intCast(i)) == 0) continue;
             const expr = ast.Expr{ .constant = c };
             const fp = eval.eval_and_hash(self.ctx, expr, &self.db.expr_arena);
             try self.register_expr(&cost0, expr, fp);
@@ -148,6 +178,7 @@ pub const Enumerator = struct {
         }
 
         try self.exprs_by_cost.append(cost0);
+        try self.update_class_av();
     }
 
     pub fn prepare_jobs_for_cost(self: *Enumerator, k: usize) !void {
@@ -164,7 +195,7 @@ pub const Enumerator = struct {
                 while (i < len) : (i += chunk_size) {
                     const end = @min(i + chunk_size, len);
                     inline for (@typeInfo(ast.UnOp).Enum.fields) |field| {
-                        try self.jobs.append(.{
+                        if (config.active.unop_mask & (1 << field.value) != 0) try self.jobs.append(.{
                             .job_type = .unop,
                             .op = field.value,
                             .c1 = c1,
@@ -190,7 +221,8 @@ pub const Enumerator = struct {
                     const end = @min(i + chunk_size, len);
                     inline for (@typeInfo(ast.BinOp).Enum.fields) |field| {
                         const op = @as(ast.BinOp, @enumFromInt(field.value));
-                        if (!(op.isCommutative() and c1 > c2)) {
+                        const enabled = config.active.binop_mask & (1 << field.value) != 0;
+                        if (enabled and !(op.isCommutative() and c1 > c2)) {
                             try self.jobs.append(.{
                                 .job_type = .binop,
                                 .op = field.value,
@@ -256,10 +288,52 @@ pub const Enumerator = struct {
         }
     }
 
+    fn recompute_canonicals_worker(self: *Enumerator, canonicals: []const ast.ExprId) void {
+        for (canonicals) |e| self.compute_vector_for_class(self.db.expr_to_class.items[e]);
+    }
+
+    /// Reallocates every class vector for the current sample grid (which may have grown with new
+    /// counterexamples), recomputes them one cost level at a time so children are always ready,
+    /// and rehashes. Requires exprs_by_cost to list the canonical expression of every class.
+    pub fn rebuild_vectors(self: *Enumerator, num_threads: usize) !void {
+        const start = std.time.milliTimestamp();
+        self.db.class_vectors.deinit();
+        self.db.class_vectors = try @import("vector_arena.zig").ClassVectorArena.init(std.heap.page_allocator, self.ctx.num_batches);
+        for (0..self.db.classes.items.len) |i| _ = try self.db.class_vectors.reserve(@intCast(i));
+
+        const threads = try self.allocator.alloc(std.Thread, num_threads);
+        defer self.allocator.free(threads);
+        for (self.exprs_by_cost.items) |list| {
+            const items = list.items;
+            const chunk = (items.len + num_threads - 1) / num_threads;
+            var spawned: usize = 0;
+            for (0..num_threads) |w| {
+                const lo = @min(w * chunk, items.len);
+                const hi = @min(lo + chunk, items.len);
+                if (lo == hi) continue;
+                threads[spawned] = try std.Thread.spawn(.{}, recompute_canonicals_worker, .{ self, items[lo..hi] });
+                spawned += 1;
+            }
+            for (threads[0..spawned]) |t| t.join();
+        }
+        try self.rehash_classes();
+        std.debug.print("Rebuilt {} class vectors on {} samples in {} ms.\n", .{ self.db.classes.items.len, self.ctx.total_samples, std.time.milliTimestamp() - start });
+    }
+
+    /// Rebuilds class fingerprints from the current class vectors. Needed after resuming from
+    /// SQLite, because the sample grid (and thus every hash) may differ from the one at save time.
+    pub fn rehash_classes(self: *Enumerator) !void {
+        self.db.fp_to_class.clear();
+        for (self.db.classes.items, 0..) |*cls, i| {
+            const class_id: database.ClassId = @intCast(i);
+            cls.hash = eval.hash_vectors(self.db.class_vectors.get(class_id));
+            try self.db.fp_to_class.insert(self.db.classes.items, class_id);
+        }
+    }
+
     pub fn worker_loop(self: *Enumerator, worker_id: usize) void {
         const queue = &self.queues[worker_id];
         const status = &self.workers_done[worker_id];
-        status.store(false, .release);
 
         const scratch = std.heap.page_allocator.alloc(eval.Vector64, self.ctx.num_batches) catch @panic("oom");
         defer std.heap.page_allocator.free(scratch);
@@ -277,6 +351,10 @@ pub const Enumerator = struct {
                     const list = self.exprs_by_cost.items[job.c1].items;
                     for (job.lhs_start..job.lhs_end) |i| {
                         const e1 = list[i];
+                        if (config.active.use_absint) {
+                            const a = self.class_av.items[self.db.expr_to_class.items[e1]];
+                            if (absint.unary(op, a).isConst()) continue;
+                        }
                         const expr = ast.Expr{ .unary = .{ .op = op, .expr = e1 } };
                         const child_vec = self.db.class_vectors.get(self.db.expr_to_class.items[e1]);
                         eval.combine_unary_into(op, child_vec, scratch);
@@ -295,12 +373,17 @@ pub const Enumerator = struct {
 
                     for (job.lhs_start..job.lhs_end) |i| {
                         const e1 = lhs_list[i];
+                        const lhs_av = if (config.active.use_absint) self.class_av.items[self.db.expr_to_class.items[e1]] else absint.AV.top;
                         const lhs_vec = self.db.class_vectors.get(self.db.expr_to_class.items[e1]);
                         for (rhs_list) |e2| {
                             if (config.active.use_pruning) {
                                 if (prune.is_pruned_depth1(op, e1, e2, job.c1, job.c2, &self.db.expr_arena)) continue;
                             } else {
                                 if (is_comm and same_cost and e1 > e2) continue;
+                            }
+                            if (config.active.use_absint) {
+                                const rhs_av = self.class_av.items[self.db.expr_to_class.items[e2]];
+                                if (absint.binary(op, lhs_av, rhs_av).isConst()) continue;
                             }
 
                             const expr = ast.Expr{ .binary = .{ .op = op, .lhs = e1, .rhs = e2 } };
@@ -320,10 +403,21 @@ pub const Enumerator = struct {
 
                     for (job.lhs_start..job.lhs_end) |i| {
                         const cond = cond_list[i];
+                        // select(const, t, f) is just t or f, which already exist. Only cost-0
+                        // classes can be constants: a costlier constant would have been folded
+                        // into its cost-0 class.
+                        if (config.active.use_pruning and self.db.expr_arena.get(cond) == .constant) continue;
+                        const cond_av = if (config.active.use_absint) self.class_av.items[self.db.expr_to_class.items[cond]] else absint.AV.top;
                         const cond_vec = self.db.class_vectors.get(self.db.expr_to_class.items[cond]);
                         for (t_list) |t| {
+                            const t_av = if (config.active.use_absint) self.class_av.items[self.db.expr_to_class.items[t]] else absint.AV.top;
                             const t_vec = self.db.class_vectors.get(self.db.expr_to_class.items[t]);
                             for (f_list) |f| {
+                                if (config.active.use_pruning and t == f) continue; // select(c, t, t) == t
+                                if (config.active.use_absint) {
+                                    const f_av = self.class_av.items[self.db.expr_to_class.items[f]];
+                                    if (absint.select(cond_av, t_av, f_av).isConst()) continue;
+                                }
                                 const expr = ast.Expr{ .select = .{ .cond = cond, .true_val = t, .false_val = f } };
                                 const f_vec = self.db.class_vectors.get(self.db.expr_to_class.items[f]);
                                 eval.combine_select_into(cond_vec, t_vec, f_vec, scratch);
@@ -341,14 +435,27 @@ pub const Enumerator = struct {
     }
 
     pub fn orchestrate_cost(self: *Enumerator, k: usize, num_threads: usize) !void {
+        try self.update_class_av();
         const start_class_id = self.db.classes.items.len;
         try self.prepare_jobs_for_cost(k);
         var cost_list = std.ArrayList(ast.ExprId).init(self.allocator);
+        // Reserve for the worst case once, up front. Untouched capacity costs no physical memory,
+        // whereas growing in the arena allocator leaks every outgrown buffer. It also keeps
+        // expr_to_class from moving while workers read it.
+        const bound = self.candidate_bound();
+        try self.db.expr_to_class.ensureUnusedCapacity(bound);
+        try self.db.classes.ensureUnusedCapacity(bound);
+        try cost_list.ensureTotalCapacity(bound);
         self.job_counter.store(0, .release);
 
         var threads = try self.allocator.alloc(std.Thread, num_threads);
         defer self.allocator.free(threads);
 
+        // Reset done flags before spawning: a worker with little work can finish (and set its
+        // flag) before the main thread gets here, and a later reset would hang the drain loop.
+        for (0..num_threads) |w| {
+            self.workers_done[w].store(false, .release);
+        }
         for (0..num_threads) |w| {
             threads[w] = try std.Thread.spawn(.{}, worker_loop, .{ self, w });
         }
@@ -357,9 +464,6 @@ pub const Enumerator = struct {
         var workers_finished = try self.allocator.alloc(bool, num_threads);
         defer self.allocator.free(workers_finished);
         @memset(workers_finished, false);
-        for (0..num_threads) |w| {
-            self.workers_done[w].store(false, .release);
-        }
 
         var exprs_processed: usize = 0;
         const start_time = std.time.milliTimestamp();
@@ -369,23 +473,19 @@ pub const Enumerator = struct {
             for (0..num_threads) |w| {
                 if (workers_finished[w]) continue;
 
-                var p_start = std.time.nanoTimestamp();
-                var p_res = self.queues[w].pop();
-                while (p_res) |res| {
+                // Bounded: when this thread is the bottleneck the workers refill the queue as fast
+                // as it drains, and an unbounded drain would starve the progress report below.
+                var budget: usize = 1 << 14;
+                while (budget > 0) : (budget -= 1) {
+                    const res = self.queues[w].pop() orelse break;
                     try self.register_expr(&cost_list, res.expr, res.hash);
                     exprs_processed += 1;
-                    p_start = std.time.nanoTimestamp();
-                    p_res = self.queues[w].pop();
                 }
 
                 if (self.workers_done[w].load(.acquire)) {
-                    p_start = std.time.nanoTimestamp();
-                    p_res = self.queues[w].pop();
-                    while (p_res) |res| {
+                    while (self.queues[w].pop()) |res| {
                         try self.register_expr(&cost_list, res.expr, res.hash);
                         exprs_processed += 1;
-                        p_start = std.time.nanoTimestamp();
-                        p_res = self.queues[w].pop();
                     }
                     workers_finished[w] = true;
                     active_workers -= 1;
@@ -415,7 +515,7 @@ pub const Enumerator = struct {
         const end_class_id = self.db.classes.items.len;
         const total_new = end_class_id - start_class_id;
 
-        if (total_new > 0) {
+        if (total_new > 0 and self.materialize) {
             const recompute_start = std.time.milliTimestamp();
 
             var recompute_threads = try self.allocator.alloc(std.Thread, num_threads);

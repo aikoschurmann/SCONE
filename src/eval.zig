@@ -73,14 +73,87 @@ pub fn combine_select_into(cond: []const Vector64, t: []const Vector64, f: []con
 }
 
 pub fn hash_vectors(vectors: []const Vector64) database.FingerprintHash {
-    var hasher1 = std.hash.Wyhash.init(0);
-    var hasher2 = std.hash.Wyhash.init(0x1337_CAFE_BABE_BEEF);
-    const bytes = std.mem.sliceAsBytes(vectors);
-    hasher1.update(bytes);
-    hasher2.update(bytes);
-    const h1 = @as(u128, hasher1.final());
-    const h2 = @as(u128, hasher2.final());
-    return (h1 << 64) | h2;
+    return std.hash.Wyhash.hash(0, std.mem.sliceAsBytes(vectors));
+}
+
+const ValuePool = std.BoundedArray(u32, config.base_edge_cases.len + 3 * config.search_constants.len + 64);
+
+/// Edge cases plus every search constant and its neighbours. Comparisons against a constant
+/// (x < 3, x == 16) are 0 on almost every uniform random input, so they need these values to be
+/// told apart.
+fn interesting_values() ValuePool {
+    var pool = ValuePool.init(0) catch unreachable;
+    const add = struct {
+        fn f(p: *ValuePool, v: u32) void {
+            if (std.mem.indexOfScalar(u32, p.slice(), v) == null) p.appendAssumeCapacity(v);
+        }
+    }.f;
+    for (config.base_edge_cases) |v| add(&pool, v);
+    for (config.search_constants) |c| {
+        add(&pool, c -% 1);
+        add(&pool, c);
+        add(&pool, c +% 1);
+    }
+    // -1 .. -64: counts (popcount, clz, ctz) are 0..32, and identities mixing a value with its
+    // count break at small negatives (x + popcount(x) is 0 only at x = -28 and -29).
+    for (1..65) |k| add(&pool, 0 -% @as(u32, @intCast(k)));
+    return pool;
+}
+
+/// Half of the values come from the pool, a quarter are small, and a quarter are uniform random.
+fn sample_value(rand: std.Random, pool: []const u32) u32 {
+    return switch (rand.uintLessThan(u8, 4)) {
+        0, 1 => pool[rand.uintLessThan(usize, pool.len)],
+        2 => rand.uintLessThan(u32, 64),
+        else => rand.int(u32),
+    };
+}
+
+/// Scalar evaluation at a single input; must match the vector semantics in combine_*_into.
+pub fn eval_point(expr_id: ast.ExprId, expr_arena_ref: *const expr_arena.ExpressionArena, x: u32, y: u32, z: u32) u32 {
+    return switch (expr_arena_ref.get(expr_id)) {
+        .variable => |v| switch (v) {
+            .x => x,
+            .y => y,
+            .z => z,
+        },
+        .constant => |c| c,
+        .unary => |u| blk: {
+            const a = eval_point(u.expr, expr_arena_ref, x, y, z);
+            break :blk switch (u.op) {
+                .not => ~a,
+                .neg => 0 -% a,
+                .clz => @clz(a),
+                .ctz => @ctz(a),
+                .popcount => @popCount(a),
+            };
+        },
+        .binary => |b| blk: {
+            const l = eval_point(b.lhs, expr_arena_ref, x, y, z);
+            const r = eval_point(b.rhs, expr_arena_ref, x, y, z);
+            const sh: u5 = @truncate(r);
+            break :blk switch (b.op) {
+                .add => l +% r,
+                .sub => l -% r,
+                .mul => l *% r,
+                .and_op => l & r,
+                .or_op => l | r,
+                .xor => l ^ r,
+                .shl => l << sh,
+                .lshr => l >> sh,
+                .ashr => @bitCast(@as(i32, @bitCast(l)) >> sh),
+                .eq => @intFromBool(l == r),
+                .ult => @intFromBool(l < r),
+                .ule => @intFromBool(l <= r),
+                .slt => @intFromBool(@as(i32, @bitCast(l)) < @as(i32, @bitCast(r))),
+                .sle => @intFromBool(@as(i32, @bitCast(l)) <= @as(i32, @bitCast(r))),
+            };
+        },
+        .select => |s| if (eval_point(s.cond, expr_arena_ref, x, y, z) != 0)
+            eval_point(s.true_val, expr_arena_ref, x, y, z)
+        else
+            eval_point(s.false_val, expr_arena_ref, x, y, z),
+    };
 }
 
 pub const BATCH_SIZE = 64;
@@ -144,13 +217,32 @@ pub const EvaluationContext = struct {
             }
         }
 
+        // 2) Counterexamples found by Z3 while verifying earlier cost levels
         if (ce_count > 0) {
-            std.debug.print("Loaded {} counterexamples from Z3.\n", .{ce_count});
+            const loaded = sqlite.?.load_ces(&ctx, idx, ce_count);
+            idx += loaded;
+            std.debug.print("Loaded {} counterexamples from Z3.\n", .{loaded});
         }
+        // 3) Default samples: a mix of edge values and uniform random values (see sample_value).
         var prng = std.Random.DefaultPrng.init(0xC0FFEE_C0FFEE);
         const rand = prng.random();
+        const pool = interesting_values();
         while (idx < total_samples) : (idx += 1) {
-            ctx.setSample(idx, rand.int(u32), rand.int(u32), rand.int(u32));
+            if (config.active.uniform_random_samples) {
+                ctx.setSample(idx, rand.int(u32), rand.int(u32), rand.int(u32));
+                continue;
+            }
+            const x = sample_value(rand, pool.slice());
+            var y = sample_value(rand, pool.slice());
+            var z = sample_value(rand, pool.slice());
+            // Aliased variables are needed to separate e.g. (x == y) from 0, or (x - y) from (x ^ y).
+            switch (rand.uintLessThan(u8, 16)) {
+                0 => y = x,
+                1 => z = x,
+                2 => z = y,
+                else => {},
+            }
+            ctx.setSample(idx, x, y, z);
         }
 
         return ctx;
@@ -216,15 +308,10 @@ pub fn eval_batch(ctx: *const EvaluationContext, expr: ast.Expr, expr_arena_ref:
 }
 
 pub fn eval_and_hash(ctx: *const EvaluationContext, expr: ast.Expr, expr_arena_ref: *const expr_arena.ExpressionArena) database.FingerprintHash {
-    var hasher1 = std.hash.Wyhash.init(0);
-    var hasher2 = std.hash.Wyhash.init(0x1337_CAFE_BABE_BEEF);
+    var hasher = std.hash.Wyhash.init(0);
     for (0..ctx.num_batches) |batch_idx| {
         const batch_res = eval_batch(ctx, expr, expr_arena_ref, batch_idx);
-        const bytes = std.mem.asBytes(&batch_res);
-        hasher1.update(bytes);
-        hasher2.update(bytes);
+        hasher.update(std.mem.asBytes(&batch_res));
     }
-    const h1 = @as(u128, hasher1.final());
-    const h2 = @as(u128, hasher2.final());
-    return (h1 << 64) | h2;
+    return hasher.final();
 }
